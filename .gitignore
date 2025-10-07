@@ -1,0 +1,8 @@
+/dist/
+/data/
+
+.env
+.env.*
+
+testdata/
+cover.*

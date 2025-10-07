@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/compose-spec/compose-spec/master/schema/compose-spec.json
+name: "cardea"
+
+services:
+  cardea:
+    image: "cardea"
+    pull_policy: "build"
+    build: { context: "./" }
+    restart: "always"
+    container_name: "cardea"
+    hostname: "cardea"
+    read_only: true
+    user: "1000:1000"
+    networks:
+      - "cardea"
+    ports:
+      - "2222:2222/tcp"
+    volumes:
+      - { type: "bind", source: "./data/", target: "/data/" }
+      - { type: "tmpfs", target: "/run/" }
+      - { type: "tmpfs", target: "/tmp/", tmpfs: { mode: 0o1777 } }
+    environment:
+      CARDEA_PRIVATE_KEY_PASSPHRASE: "${CARDEA_PRIVATE_KEY_PASSPHRASE:-}"
+      CARDEA_UNKNOWN_HOSTS_POLICY: "${CARDEA_UNKNOWN_HOSTS_POLICY:-tofu}"
+      CARDEA_LOG_LEVEL: "${CARDEA_LOG_LEVEL:-debug}"
+
+networks:
+  cardea:
+    name: "cardea"

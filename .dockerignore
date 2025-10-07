@@ -1,0 +1,16 @@
+/dist/
+/data/
+
+.env
+.env.*
+
+testdata/
+cover.*
+
+Dockerfile
+Dockerfile.*
+compose.yaml
+compose.*.yaml
+
+.github/
+.gitlab-ci.yml
