@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -334,7 +335,7 @@ func TestBastionSSHServer(t *testing.T) {
 			{pattern: "*@*:*", user: "alice@:0", ok: false},
 			{pattern: "*@*:*", user: "alice@:invalid", ok: false},
 			{pattern: "*@*:*", user: "alice@127.0.0.1:", ok: false},
-			{pattern: "*@*:*", user: "alice@127.0.0.1:0", ok: false},
+			{pattern: "*@*:*", user: "alice@127.0.0.1:0", ok: true},
 			{pattern: "*@*:*", user: "alice@127.0.0.1:invalid", ok: false},
 			{pattern: "*@*", user: "alice@127.0.0.1:123", ok: false},
 			{pattern: "*+*", user: "alice@127.0.0.1:123", ok: false},
@@ -396,11 +397,11 @@ func TestBastionSSHServer(t *testing.T) {
 			{pattern: "*:123", target: targetAddr.String(), ok: false},
 			{pattern: "*:*", target: "", ok: false},
 			{pattern: "*:*", target: ":", ok: false},
-			{pattern: "*:*", target: ":0", ok: false},
+			{pattern: "*:*", target: ":0", ok: true},
 			{pattern: "*:*", target: ":invalid", ok: false},
 			{pattern: "*:*", target: "127.0.0.1", ok: false},
 			{pattern: "*:*", target: "127.0.0.1:", ok: false},
-			{pattern: "*:*", target: "127.0.0.1:0", ok: false},
+			{pattern: "*:*", target: "127.0.0.1:0", ok: true},
 			{pattern: "*:*", target: "127.0.0.1:invalid", ok: false},
 		}
 
@@ -429,15 +430,133 @@ func TestBastionSSHServer(t *testing.T) {
 				defer func() { _ = session.Close() }()
 
 				if test.ok {
-					if targetConn, err := bastionConn.Dial("tcp", test.target); err != nil {
+					targetConn, err := bastionConn.Dial("tcp", test.target)
+					if err != nil {
 						t.Errorf("expected dial to succeed, but it failed: %v", err)
 						return
-					} else {
-						_ = targetConn.Close()
+					}
+					defer func() { _ = targetConn.Close() }()
+
+					testData := []byte("Hello, World!")
+					if _, err := targetConn.Write(testData); err != nil {
+						t.Errorf("failed to write data: %v", err)
+						return
+					}
+
+					buf := make([]byte, len(testData))
+					if _, err := io.ReadFull(targetConn, buf); err != nil {
+						t.Errorf("failed to read data: %v", err)
+						return
+					}
+
+					if string(buf) != string(testData) {
+						t.Errorf("expected %q, got %q", testData, buf)
+						return
 					}
 				} else {
 					if _, err = bastionConn.Dial("tcp", test.target); err == nil {
 						t.Error("expected dial to fail, but it succeeded")
+						return
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("permitlisten", func(t *testing.T) {
+		cli, cliPublicKey, err := setupClient(t)
+		if err != nil {
+			t.Errorf("failed to setup client: %v", err)
+			return
+		}
+		cli.User = fmt.Sprintf("alice@%s", mockAddr)
+		cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
+
+		tests := []struct {
+			pattern string
+			ok      bool
+		}{
+			{pattern: "*:*", ok: true},
+			{pattern: "127.0.0.1/8:*", ok: true},
+			{pattern: "192.168.1.1:*", ok: false},
+			{pattern: "*:1", ok: false},
+		}
+
+		for _, test := range tests {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatalf("failed to get free port: %v", err)
+			}
+			bindAddr := listener.Addr().String()
+			_ = listener.Close()
+
+			t.Run(fmt.Sprintf("%s->%s", bindAddr, test.pattern), func(t *testing.T) {
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`permitconnect="alice@%s",permitlisten="%s" %s`, mockAddr, test.pattern, cliAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+
+				bastionConn, err := connectToServer(t, cli, bastionSrv)
+				if err != nil {
+					t.Errorf("failed to connect to server: %v", err)
+					return
+				}
+
+				session, err := bastionConn.NewSession()
+				if err != nil {
+					t.Errorf("failed to create session: %v", err)
+					return
+				}
+				defer func() { _ = session.Close() }()
+
+				if test.ok {
+					listener, err := bastionConn.Listen("tcp", bindAddr)
+					if err != nil {
+						t.Errorf("expected listen to succeed, but it failed: %v", err)
+						return
+					}
+					defer func() { _ = listener.Close() }()
+
+					go func() {
+						conn, err := net.Dial("tcp", listener.Addr().String())
+						if err != nil {
+							return
+						}
+						defer func() { _ = conn.Close() }()
+						_, _ = io.Copy(conn, conn)
+					}()
+
+					conn, err := listener.Accept()
+					if err != nil {
+						t.Errorf("failed to accept connection: %v", err)
+						return
+					}
+					defer func() { _ = conn.Close() }()
+
+					testData := []byte("Hello, World!")
+					if _, err := conn.Write(testData); err != nil {
+						t.Errorf("failed to write data: %v", err)
+						return
+					}
+
+					buf := make([]byte, len(testData))
+					if _, err := io.ReadFull(conn, buf); err != nil {
+						t.Errorf("failed to read data: %v", err)
+						return
+					}
+
+					if string(buf) != string(testData) {
+						t.Errorf("expected %q, got %q", testData, buf)
+						return
+					}
+				} else {
+					if listener, err := bastionConn.Listen("tcp", bindAddr); err == nil {
+						_ = listener.Close()
+						t.Error("expected listen to fail, but it succeeded")
 						return
 					}
 				}
@@ -516,8 +635,16 @@ func TestBastionSSHServer(t *testing.T) {
 		}
 		defer func() { _ = session.Close() }()
 
+		// Verify local port forwarding is blocked
 		if _, err := bastionConn.Dial("tcp", mockAddr.String()); err == nil {
 			t.Error("expected dial to fail, but it succeeded")
+			return
+		}
+
+		// Verify remote port forwarding is blocked
+		if listener, err := bastionConn.Listen("tcp", "127.0.0.1:0"); err == nil {
+			_ = listener.Close()
+			t.Error("expected listen to fail, but it succeeded")
 			return
 		}
 	})

@@ -63,6 +63,7 @@ type Server struct {
 type AuthorizedKeyOptions struct {
 	PermitConnects   []PermitConnect `json:"permit_connects"`
 	PermitOpens      []PermitOpen    `json:"permit_opens"`
+	PermitListens    []PermitListen  `json:"permit_listens"`
 	Command          string          `json:"command"`
 	NoPortForwarding bool            `json:"no_port_forwarding"`
 	NoPty            bool            `json:"no_pty"`
@@ -75,6 +76,11 @@ type PermitConnect struct {
 }
 
 type PermitOpen struct {
+	Host string `json:"host"`
+	Port string `json:"port"`
+}
+
+type PermitListen struct {
 	Host string `json:"host"`
 	Port string `json:"port"`
 }
@@ -345,27 +351,60 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 	}
 	defer func() { _ = backendConn.Close() }()
 
-	go ssh.DiscardRequests(requests)
-
-	for newChannel := range channels {
-		switch newChannel.ChannelType() {
-		case "session":
-			go func() {
-				if err := srv.handleSession(frontendConn, backendConn, newChannel); err != nil {
-					slog.Error("session error", "error", err)
+	// Handle global requests
+	go func() {
+		for req := range requests {
+			switch req.Type {
+			case "tcpip-forward", "cancel-tcpip-forward":
+				go func() {
+					if err := srv.handleTCPIPForward(req, frontendConn, backendConn); err != nil {
+						slog.Error("tcpip-forward error", "error", err)
+					}
+				}()
+			default:
+				slog.Debug("unsupported global request type", "type", req.Type)
+				if req.WantReply {
+					_ = req.Reply(false, nil)
 				}
-			}()
-		case "direct-tcpip":
-			go func() {
-				if err := srv.handleDirectTCPIP(frontendConn, backendConn, newChannel); err != nil {
-					slog.Error("direct-tcpip error", "error", err)
-				}
-			}()
-		default:
-			slog.Warn("unsupported channel type", "type", newChannel.ChannelType())
-			_ = newChannel.Reject(ssh.UnknownChannelType, "unsupported channel type")
+			}
 		}
-	}
+	}()
+
+	// Handle frontend channels
+	go func() {
+		for newChannel := range channels {
+			switch newChannel.ChannelType() {
+			case "session":
+				go func() {
+					if err := srv.handleSession(frontendConn, backendConn, newChannel); err != nil {
+						slog.Error("session error", "error", err)
+					}
+				}()
+			case "direct-tcpip":
+				go func() {
+					if err := srv.handleDirectTCPIP(frontendConn, backendConn, newChannel); err != nil {
+						slog.Error("direct-tcpip error", "error", err)
+					}
+				}()
+			default:
+				slog.Warn("unsupported channel type", "type", newChannel.ChannelType())
+				_ = newChannel.Reject(ssh.UnknownChannelType, "unsupported channel type")
+			}
+		}
+	}()
+
+	// Handle backend channels
+	go func() {
+		for newChannel := range backendConn.HandleChannelOpen("forwarded-tcpip") {
+			go func() {
+				if err := srv.handleForwardedTCPIP(frontendConn, newChannel); err != nil {
+					slog.Error("forwarded-tcpip error", "error", err)
+				}
+			}()
+		}
+	}()
+
+	_ = frontendConn.Wait()
 
 	return nil
 }
@@ -791,6 +830,116 @@ func (srv *Server) handleDirectTCPIP(frontendConn *ssh.ServerConn, backendConn *
 	return nil
 }
 
+func (srv *Server) handleTCPIPForward(
+	req *ssh.Request,
+	frontendConn *ssh.ServerConn,
+	backendConn *ssh.Client,
+) error {
+	authKeyOptsStr := frontendConn.Permissions.Extensions[sshKeyOptsExt]
+	if authKeyOptsStr == "" {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return fmt.Errorf("authorized key options not provided")
+	}
+
+	var authKeyOpts AuthorizedKeyOptions
+	if err := json.Unmarshal([]byte(authKeyOptsStr), &authKeyOpts); err != nil {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return err
+	}
+
+	if authKeyOpts.NoPortForwarding {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return nil
+	}
+
+	var payload struct {
+		BindAddr string
+		BindPort uint32
+	}
+	if err := ssh.Unmarshal(req.Payload, &payload); err != nil {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return err
+	}
+
+	allowed := false
+	for _, pl := range authKeyOpts.PermitListens {
+		matchHost := srv.matchHostPattern(pl.Host, payload.BindAddr)
+		matchPort := srv.matchPortPattern(pl.Port, payload.BindPort)
+		if matchHost && matchPort {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return nil
+	}
+
+	ok, response, err := backendConn.SendRequest(req.Type, req.WantReply, req.Payload)
+	if err != nil {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return err
+	}
+
+	if req.WantReply {
+		_ = req.Reply(ok, response)
+	}
+
+	return nil
+}
+
+func (srv *Server) handleForwardedTCPIP(frontendConn *ssh.ServerConn, newChannel ssh.NewChannel) error {
+	clientChannel, clientRequests, err := frontendConn.OpenChannel("forwarded-tcpip", newChannel.ExtraData())
+	if err != nil {
+		_ = newChannel.Reject(ssh.ConnectionFailed, "failed to open channel to client")
+		return err
+	}
+	defer func() { _ = clientChannel.Close() }()
+
+	go ssh.DiscardRequests(clientRequests)
+
+	backendChannel, backendRequests, err := newChannel.Accept()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = backendChannel.Close() }()
+
+	go ssh.DiscardRequests(backendRequests)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		defer func() { _ = backendChannel.Close() }()
+		buf := bufferPool.Get()
+		defer bufferPool.Put(buf)
+		_, _ = io.CopyBuffer(backendChannel, clientChannel, buf.([]byte))
+	}()
+	go func() {
+		defer wg.Done()
+		defer func() { _ = clientChannel.Close() }()
+		buf := bufferPool.Get()
+		defer bufferPool.Put(buf)
+		_, _ = io.CopyBuffer(clientChannel, backendChannel, buf.([]byte))
+	}()
+
+	wg.Wait()
+	return nil
+}
+
 func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 	srv.authKeysMu.RLock()
 	defer srv.authKeysMu.RUnlock()
@@ -1164,6 +1313,15 @@ func (srv *Server) newAuthorizedKeysDB(path string) (map[string][]*AuthorizedKey
 						}
 						authKeyOpts.PermitOpens = append(authKeyOpts.PermitOpens, *permitopen)
 					}
+				} else if after, ok := strings.CutPrefix(opt, "permitlisten=\""); ok {
+					for val := range strings.SplitSeq(strings.TrimSuffix(after, "\""), ",") {
+						permitlisten, err := srv.parsePermitListen(val)
+						if err != nil {
+							slog.Warn("skipping invalid authorized keys line", "line", line, "error", err)
+							continue line
+						}
+						authKeyOpts.PermitListens = append(authKeyOpts.PermitListens, *permitlisten)
+					}
 				} else if after, ok := strings.CutPrefix(opt, "command=\""); ok {
 					authKeyOpts.Command = strings.TrimSuffix(after, "\"")
 				} else if opt == "no-port-forwarding" {
@@ -1267,6 +1425,17 @@ func (srv *Server) parsePermitOpen(permitopen string) (*PermitOpen, error) {
 	return nil, fmt.Errorf("invalid permitopen format, expected <host>:<port>, got %s", permitopen)
 }
 
+func (srv *Server) parsePermitListen(permitlisten string) (*PermitListen, error) {
+	if permitlisten != "" && len(permitlisten) < 512 {
+		host, port, err := net.SplitHostPort(permitlisten)
+		if err == nil && host != "" && port != "" {
+			return &PermitListen{Host: host, Port: port}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("invalid permitlisten format, expected <host>:<port>, got %s", permitlisten)
+}
+
 func (srv *Server) matchUserPattern(pattern, user string) bool {
 	if user == "" || len(user) > 255 {
 		return false
@@ -1276,7 +1445,7 @@ func (srv *Server) matchUserPattern(pattern, user string) bool {
 }
 
 func (srv *Server) matchHostPattern(pattern, host string) bool {
-	if host == "" || len(host) > 255 {
+	if len(host) > 255 {
 		return false
 	}
 
@@ -1299,7 +1468,7 @@ func (srv *Server) matchHostPattern(pattern, host string) bool {
 
 func (srv *Server) matchPortPattern(pattern string, port any) bool {
 	targetPort, err := strconv.ParseUint(fmt.Sprintf("%v", port), 10, 16)
-	if err != nil || targetPort < 1 || targetPort > math.MaxUint16 {
+	if err != nil || targetPort > math.MaxUint16 {
 		return false
 	}
 

@@ -200,7 +200,7 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 	}
 	defer func() { _ = sshConn.Close() }()
 
-	go ssh.DiscardRequests(requests)
+	go srv.handleGlobalRequests(requests, sshConn)
 
 	for newChannel := range channels {
 		switch newChannel.ChannelType() {
@@ -383,6 +383,112 @@ func (srv *Server) handleDirectTCPIP(newChannel ssh.NewChannel) error {
 			_, writeErr := channel.Write(buffer[:n])
 			if writeErr != nil {
 				return writeErr
+			}
+		}
+	}
+}
+
+func (srv *Server) handleGlobalRequests(requests <-chan *ssh.Request, sshConn *ssh.ServerConn) {
+	for req := range requests {
+		switch req.Type {
+		case "tcpip-forward":
+			var payload struct {
+				BindAddr string
+				BindPort uint32
+			}
+			if err := ssh.Unmarshal(req.Payload, &payload); err != nil {
+				if req.WantReply {
+					_ = req.Reply(false, nil)
+				}
+				continue
+			}
+
+			listener, err := net.Listen("tcp", net.JoinHostPort(payload.BindAddr, fmt.Sprintf("%d", payload.BindPort)))
+			if err != nil {
+				if req.WantReply {
+					_ = req.Reply(false, nil)
+				}
+				continue
+			}
+
+			boundPort := uint32(listener.Addr().(*net.TCPAddr).Port) // #nosec G115
+			if req.WantReply {
+				_ = req.Reply(true, ssh.Marshal(struct{ Port uint32 }{boundPort}))
+			}
+
+			go func() {
+				defer func() { _ = listener.Close() }()
+				for {
+					select {
+					case <-srv.ctx.Done():
+						return
+					default:
+					}
+
+					conn, err := listener.Accept()
+					if err != nil {
+						select {
+						case <-srv.ctx.Done():
+							return
+						default:
+							continue
+						}
+					}
+
+					go srv.handleForwardedTCPIP(sshConn, conn, payload.BindAddr, boundPort)
+				}
+			}()
+
+		case "cancel-tcpip-forward":
+			if req.WantReply {
+				_ = req.Reply(true, nil)
+			}
+
+		default:
+			if req.WantReply {
+				_ = req.Reply(false, nil)
+			}
+		}
+	}
+}
+
+func (srv *Server) handleForwardedTCPIP(sshConn *ssh.ServerConn, conn net.Conn, bindAddr string, bindPort uint32) {
+	defer func() { _ = conn.Close() }()
+
+	channelData := ssh.Marshal(struct {
+		ConnectedAddr  string
+		ConnectedPort  uint32
+		OriginatorAddr string
+		OriginatorPort uint32
+	}{
+		ConnectedAddr:  bindAddr,
+		ConnectedPort:  bindPort,
+		OriginatorAddr: conn.RemoteAddr().(*net.TCPAddr).IP.String(),
+		OriginatorPort: uint32(conn.RemoteAddr().(*net.TCPAddr).Port), // #nosec G115
+	})
+
+	channel, requests, err := sshConn.OpenChannel("forwarded-tcpip", channelData)
+	if err != nil {
+		return
+	}
+	defer func() { _ = channel.Close() }()
+
+	go ssh.DiscardRequests(requests)
+
+	// Copy everything received back to the sender
+	buffer := make([]byte, 4096)
+	for {
+		n, readErr := channel.Read(buffer)
+		if readErr != nil {
+			if readErr == io.EOF {
+				return
+			}
+			return
+		}
+		if n > 0 {
+			_, writeErr := channel.Write(buffer[:n])
+			if writeErr != nil {
+				return
 			}
 		}
 	}

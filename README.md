@@ -87,16 +87,22 @@ permitconnect="user1@host1:port1,user2@host2:port2",permitopen="host1:port1,host
 
 #### Optional
 
-- **`permitopen`**: comma-separated list of allowed port forwarding destinations (can be specified multiple times).
+- **`permitopen`**: comma-separated list of allowed local port forwarding destinations (can be specified multiple times).
   - **Format:** `<host>:<port>`.
   - Supports glob patterns and CIDR blocks for hosts.
   - Supports glob patterns and ranges (e.g., `8000-8999`) for ports.
   - By default, only localhost traffic to any port is allowed.
   - **Example:** `permitopen="localhost:1-65535,127.0.0.1/8:1-65535,[::1/128]:1-65535"`.
+- **`permitlisten`**: comma-separated list of allowed remote port forwarding bind addresses (can be specified multiple times).
+  - **Format:** `<host>:<port>`.
+  - Supports glob patterns and CIDR blocks for hosts.
+  - Supports glob patterns and ranges (e.g., `8000-8999`) for ports.
+  - By default, remote port forwarding is disabled.
+  - **Example:** `permitlisten="localhost:8080,0.0.0.0:8000-8999"`.
 - **`command`**: force execution of a specific command.
   - **Example:** `command="nologin"`.
 - **`no-pty`**: disable pseudo-terminal allocation.
-- **`no-port-forwarding`**: disable port forwarding.
+- **`no-port-forwarding`**: disable both local and remote port forwarding.
 
 #### Macro support
 
