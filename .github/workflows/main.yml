@@ -196,6 +196,8 @@ jobs:
             type=semver,pattern=v{{version}}
             type=semver,pattern=v{{major}}.{{minor}}
             type=semver,pattern=v{{major}}
+          labels: |
+            org.opencontainers.image.created={{commit_date 'YYYY-MM-DDTHH:mm:ss.SSS[Z]' tz='UTC'}}
       - name: "Build and push"
         uses: "hectorm/ghaction-docker-buildx-build@33922c57afa698702c5e79d8935676df4da1d85d"
         with:
