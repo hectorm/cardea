@@ -4,27 +4,19 @@ package disk
 
 import (
 	"os"
-	"syscall"
 	"unsafe"
-)
 
-const (
-	// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfileex
-	LOCKFILE_EXCLUSIVE_LOCK   = 0x00000002
-	LOCKFILE_FAIL_IMMEDIATELY = 0x00000001
+	"golang.org/x/sys/windows"
 )
 
 var (
-	kernel32           = syscall.NewLazyDLL("kernel32.dll")
-	getDiskFreeSpaceEx = kernel32.NewProc("GetDiskFreeSpaceExW")
-	lockFileEx         = kernel32.NewProc("LockFileEx")
-	unlockFileEx       = kernel32.NewProc("UnlockFileEx")
+	getDiskFreeSpaceEx = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetDiskFreeSpaceExW")
 )
 
 func GetDiskUsage(path string) (float64, error) {
 	var freeBytes, totalBytes uint64
 
-	pathPtr, err := syscall.UTF16PtrFromString(path)
+	pathPtr, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return 0, err
 	}
@@ -51,32 +43,20 @@ func GetDiskUsage(path string) (float64, error) {
 }
 
 func LockFile(file *os.File) error {
-	var overlapped syscall.Overlapped
-	ret, _, err := lockFileEx.Call(
-		uintptr(syscall.Handle(file.Fd())),
-		uintptr(LOCKFILE_EXCLUSIVE_LOCK|LOCKFILE_FAIL_IMMEDIATELY),
+	var overlapped windows.Overlapped
+	return windows.LockFileEx(
+		windows.Handle(file.Fd()),
+		windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY,
 		0, 1, 0,
-		uintptr(unsafe.Pointer(&overlapped)),
+		&overlapped,
 	)
-
-	if ret == 0 {
-		return err
-	}
-
-	return nil
 }
 
 func UnlockFile(file *os.File) error {
-	var overlapped syscall.Overlapped
-	ret, _, err := unlockFileEx.Call(
-		uintptr(syscall.Handle(file.Fd())),
+	var overlapped windows.Overlapped
+	return windows.UnlockFileEx(
+		windows.Handle(file.Fd()),
 		0, 1, 0,
-		uintptr(unsafe.Pointer(&overlapped)),
+		&overlapped,
 	)
-
-	if ret == 0 {
-		return err
-	}
-
-	return nil
 }

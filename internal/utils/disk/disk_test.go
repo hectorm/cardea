@@ -102,13 +102,21 @@ func TestDisk(t *testing.T) {
 	t.Run("lock_unlock_file", func(t *testing.T) {
 		tempDir := t.TempDir()
 		path := filepath.Join(tempDir, "test.txt")
+		base := filepath.Base(path)
 
 		if err := os.WriteFile(path, []byte("test content"), 0600); err != nil {
 			t.Errorf("failed to create file: %v", err)
 			return
 		}
 
-		file1, err := os.OpenFile(path, os.O_RDWR, 0600) // #nosec G304
+		root, err := os.OpenRoot(tempDir)
+		if err != nil {
+			t.Errorf("failed to open root: %v", err)
+			return
+		}
+		defer root.Close()
+
+		file1, err := root.OpenFile(base, os.O_RDWR, 0600)
 		if err != nil {
 			t.Errorf("failed to open file #1: %v", err)
 			return
@@ -121,7 +129,7 @@ func TestDisk(t *testing.T) {
 		}
 		defer func() { _ = UnlockFile(file1) }()
 
-		file2, err := os.OpenFile(path, os.O_RDWR, 0600) // #nosec G304
+		file2, err := root.OpenFile(base, os.O_RDWR, 0600)
 		if err != nil {
 			t.Errorf("failed to open file #2: %v", err)
 			return
@@ -129,7 +137,7 @@ func TestDisk(t *testing.T) {
 		defer func() { _ = file2.Close() }()
 
 		if err := LockFile(file2); err == nil {
-			t.Error("expected error when locking file #2 while file #1 is locked")
+			t.Error("locking file #2 should fail while file #1 is locked")
 			return
 		}
 		defer func() { _ = UnlockFile(file2) }()
