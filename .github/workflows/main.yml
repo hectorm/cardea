@@ -128,6 +128,8 @@ jobs:
         with:
           filter: "blob:none"
           fetch-depth: 0
+      - name: "Set SOURCE_DATE_EPOCH"
+        run: printf 'SOURCE_DATE_EPOCH=%s\n' "$(git log -1 --format=%ct)" >> "${GITHUB_ENV:?}"
       - name: "Set up Go"
         uses: "actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c"
         with:
@@ -164,6 +166,8 @@ jobs:
         with:
           filter: "blob:none"
           fetch-depth: 0
+      - name: "Set SOURCE_DATE_EPOCH"
+        run: printf 'SOURCE_DATE_EPOCH=%s\n' "$(git log -1 --format=%ct)" >> "${GITHUB_ENV:?}"
       - name: "Set up Docker Buildx"
         uses: "hectorm/ghaction-docker-buildx-setup@fec3efdbb455c2aa58a4fbfd11a9853f5de2cdba"
       - name: "Login to GitHub Container Registry"
@@ -206,8 +210,8 @@ jobs:
             linux/s390x
           tags: "${{ steps.meta.outputs.tags }}"
           labels: "${{ steps.meta.outputs.labels }}"
-          push: "${{ github.event_name != 'pull_request' }}"
           extra-args: |
+            --output=type=image,push=${{ github.event_name != 'pull_request' }},rewrite-timestamp=true
             --provenance=mode=max
             --sbom=true
 
