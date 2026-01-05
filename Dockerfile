@@ -10,6 +10,7 @@ FROM --platform=${BUILDPLATFORM:-linux/amd64} docker.io/golang:1.25.5-trixie@sha
 ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT
+ARG SOURCE_DATE_EPOCH
 
 WORKDIR /src/
 COPY ./go.mod ./go.sum ./
