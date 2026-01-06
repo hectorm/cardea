@@ -36,6 +36,7 @@ FROM scratch AS main
 COPY --from=build /rootfs/ /
 
 ENV CARDEA_PRIVATE_KEY_FILE=/data/private_key
+ENV CARDEA_TPM_KEY_FILE=/data/tpm_key.blob
 ENV CARDEA_AUTHORIZED_KEYS_FILE=/data/authorized_keys
 ENV CARDEA_KNOWN_HOSTS_FILE=/data/known_hosts
 ENV CARDEA_RECORDINGS_DIR=/data/recordings/

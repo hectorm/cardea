@@ -60,3 +60,7 @@ func UnlockFile(file *os.File) error {
 		&overlapped,
 	)
 }
+
+func SyncDir(_ string) error {
+	return nil
+}

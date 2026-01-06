@@ -26,7 +26,7 @@ VERSION := $(if $(GIT_TAG),$(GIT_TAG),$(GIT_SHA))
 GOOS := $(shell '$(GO)' env GOOS)
 GOARCH := $(shell '$(GO)' env GOARCH)
 GOVARIANT := $(GO386)$(GOAMD64)$(GOARM)$(GOMIPS)$(GOMIPS64)$(GOPPC64)
-export CGO_ENABLED := 0
+export CGO_ENABLED ?= 0
 
 GOFLAGS := -trimpath
 LDFLAGS := -s -w -X "github.com/hectorm/cardea/internal/config.version=$(VERSION)"

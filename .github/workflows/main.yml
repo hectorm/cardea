@@ -89,12 +89,30 @@ jobs:
         with:
           go-version-file: "./go.mod"
           check-latest: true
+      - name: "Install native dependencies (Linux)"
+        if: "runner.os == 'Linux'"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev
+      - name: "Install native dependencies (Windows)"
+        if: "runner.os == 'Windows'"
+        shell: "pwsh"
+        run: |
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm mingw-w64-x86_64-openssl
+          $opensslPath = "C:\Program Files\OpenSSL-Win64"
+          Remove-Item -Path $opensslPath -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Junction -Path $opensslPath -Target "C:\msys64\mingw64"
+          echo "C:\msys64\mingw64\bin" >> $env:GITHUB_PATH
       - name: "Test"
         run: |
           make test
+        env:
+          CGO_ENABLED: "1"
       - name: "Test (race)"
         run: |
           make test-race
+        env:
+          CGO_ENABLED: "1"
 
   build:
     name: >-

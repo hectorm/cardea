@@ -4,6 +4,7 @@ package disk
 
 import (
 	"os"
+	"path/filepath"
 
 	"golang.org/x/sys/unix"
 )
@@ -14,4 +15,24 @@ func LockFile(file *os.File) error {
 
 func UnlockFile(file *os.File) error {
 	return unix.Flock(int(file.Fd()), unix.LOCK_UN)
+}
+
+func SyncDir(path string) error {
+	path = filepath.Clean(path)
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
+	d, err := root.OpenFile(base, os.O_RDONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+
+	return d.Sync()
 }

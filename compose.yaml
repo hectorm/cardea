@@ -10,7 +10,7 @@ services:
     container_name: "cardea"
     hostname: "cardea"
     read_only: true
-    user: "1000:1000"
+    user: "${CARDEA_UID:-1000}:${CARDEA_GID:-1000}"
     networks:
       - "cardea"
     ports:
@@ -19,8 +19,14 @@ services:
       - { type: "bind", source: "./data/", target: "/data/" }
       - { type: "tmpfs", target: "/run/" }
       - { type: "tmpfs", target: "/tmp/", tmpfs: { mode: 0o1777 } }
+    devices:
+      - "/dev/tpmrm0:/dev/tpmrm0"
     environment:
+      CARDEA_KEY_STRATEGY: "${CARDEA_KEY_STRATEGY:-file}"
       CARDEA_PRIVATE_KEY_PASSPHRASE: "${CARDEA_PRIVATE_KEY_PASSPHRASE:-}"
+      CARDEA_TPM_PARENT_HANDLE: "${CARDEA_TPM_PARENT_HANDLE:-}"
+      CARDEA_TPM_PARENT_AUTH: "${CARDEA_TPM_PARENT_AUTH:-}"
+      CARDEA_TPM_KEY_AUTH: "${CARDEA_TPM_KEY_AUTH:-}"
       CARDEA_UNKNOWN_HOSTS_POLICY: "${CARDEA_UNKNOWN_HOSTS_POLICY:-tofu}"
       CARDEA_LOG_LEVEL: "${CARDEA_LOG_LEVEL:-debug}"
 

@@ -47,6 +47,7 @@ func setupBastionServer(t testing.TB, authorizedKeysContent, knownHostsContent s
 
 	cfg := &config.Config{
 		Listen:                   "127.0.0.1:0",
+		KeyStrategy:              "file",
 		PrivateKeyFile:           filepath.Join(t.TempDir(), "private_key"),
 		PrivateKeyPassphrase:     "",
 		PrivateKeyPassphraseFile: "",
@@ -2102,173 +2103,32 @@ func TestBastionSSHServer(t *testing.T) {
 		})
 	})
 
-	t.Run("private_key", func(t *testing.T) {
-		t.Run("existing_with_passphrase", func(t *testing.T) {
-			_, privateKey, err := ed25519.GenerateKey(rand.Reader)
-			if err != nil {
-				t.Errorf("failed to generate private key: %v", err)
-				return
-			}
-
-			pemBlock, err := ssh.MarshalPrivateKeyWithPassphrase(privateKey, "", []byte("hunter2"))
-			if err != nil {
-				t.Errorf("failed to marshal private key: %v", err)
-				return
-			}
-
-			privateKeyPath := filepath.Join(t.TempDir(), "private_key")
-			if err := os.WriteFile(privateKeyPath, pem.EncodeToMemory(pemBlock), 0600); err != nil {
-				t.Errorf("failed to write private key to file: %v", err)
-				return
-			}
-
-			t.Run("correct_passphrase", func(t *testing.T) {
-				_, err = setupBastionServer(t, "", "", func(srv *Server) error {
-					srv.config.PrivateKeyFile = privateKeyPath
-					srv.config.PrivateKeyPassphrase = "hunter2"
-					srv.config.PrivateKeyPassphraseFile = ""
-					return nil
-				})
+	t.Run("credential_providers", func(t *testing.T) {
+		t.Run("file", func(t *testing.T) {
+			t.Run("existing_with_passphrase", func(t *testing.T) {
+				_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 				if err != nil {
-					t.Errorf("failed to setup bastion server with existing private key: %v", err)
+					t.Errorf("failed to generate private key: %v", err)
 					return
 				}
-			})
 
-			t.Run("wrong_passphrase", func(t *testing.T) {
-				_, err = setupBastionServer(t, "", "", func(srv *Server) error {
-					srv.config.PrivateKeyFile = privateKeyPath
-					srv.config.PrivateKeyPassphrase = "wrongpass"
-					srv.config.PrivateKeyPassphraseFile = ""
-					return nil
-				})
-				if err == nil {
-					t.Error("expected setup with wrong passphrase to fail, but it succeeded")
-					return
-				}
-			})
-
-			t.Run("missing_passphrase", func(t *testing.T) {
-				_, err = setupBastionServer(t, "", "", func(srv *Server) error {
-					srv.config.PrivateKeyFile = privateKeyPath
-					srv.config.PrivateKeyPassphrase = ""
-					srv.config.PrivateKeyPassphraseFile = ""
-					return nil
-				})
-				if err == nil {
-					t.Error("expected setup with missing passphrase to fail, but it succeeded")
-					return
-				}
-			})
-		})
-
-		t.Run("existing_without_passphrase", func(t *testing.T) {
-			_, privateKey, err := ed25519.GenerateKey(rand.Reader)
-			if err != nil {
-				t.Errorf("failed to generate private key: %v", err)
-				return
-			}
-
-			pemBlock, err := ssh.MarshalPrivateKey(privateKey, "")
-			if err != nil {
-				t.Errorf("failed to marshal private key: %v", err)
-				return
-			}
-
-			privateKeyPath := filepath.Join(t.TempDir(), "private_key")
-			if err := os.WriteFile(privateKeyPath, pem.EncodeToMemory(pemBlock), 0600); err != nil {
-				t.Errorf("failed to write private key to file: %v", err)
-				return
-			}
-
-			t.Run("passphrase", func(t *testing.T) {
-				_, err = setupBastionServer(t, "", "", func(srv *Server) error {
-					srv.config.PrivateKeyFile = privateKeyPath
-					srv.config.PrivateKeyPassphrase = "hunter2"
-					srv.config.PrivateKeyPassphraseFile = ""
-					return nil
-				})
-				if err == nil {
-					t.Error("expected setup with passphrase to fail, but it succeeded")
-					return
-				}
-			})
-
-			t.Run("no_passphrase", func(t *testing.T) {
-				_, err = setupBastionServer(t, "", "", func(srv *Server) error {
-					srv.config.PrivateKeyFile = privateKeyPath
-					srv.config.PrivateKeyPassphrase = ""
-					srv.config.PrivateKeyPassphraseFile = ""
-					return nil
-				})
+				pemBlock, err := ssh.MarshalPrivateKeyWithPassphrase(privateKey, "", []byte("hunter2"))
 				if err != nil {
-					t.Errorf("failed to setup bastion server with existing private key: %v", err)
-					return
-				}
-			})
-		})
-
-		t.Run("missing_with_passphrase", func(t *testing.T) {
-			privateKeyPath := filepath.Join(t.TempDir(), "private_key")
-
-			_, err = setupBastionServer(t, "", "", func(srv *Server) error {
-				srv.config.PrivateKeyFile = privateKeyPath
-				srv.config.PrivateKeyPassphrase = "hunter2"
-				srv.config.PrivateKeyPassphraseFile = ""
-				return nil
-			})
-			if err != nil {
-				t.Errorf("failed to setup bastion server with missing private key: %v", err)
-				return
-			}
-		})
-
-		t.Run("missing_without_passphrase", func(t *testing.T) {
-			privateKeyPath := filepath.Join(t.TempDir(), "private_key")
-
-			_, err = setupBastionServer(t, "", "", func(srv *Server) error {
-				srv.config.PrivateKeyFile = privateKeyPath
-				srv.config.PrivateKeyPassphrase = ""
-				srv.config.PrivateKeyPassphraseFile = ""
-				return nil
-			})
-			if err != nil {
-				t.Errorf("failed to setup bastion server with missing private key: %v", err)
-				return
-			}
-		})
-
-		t.Run("existing_with_passphrase_file", func(t *testing.T) {
-			_, privateKey, err := ed25519.GenerateKey(rand.Reader)
-			if err != nil {
-				t.Errorf("failed to generate private key: %v", err)
-				return
-			}
-
-			pemBlock, err := ssh.MarshalPrivateKeyWithPassphrase(privateKey, "", []byte("hunter2"))
-			if err != nil {
-				t.Errorf("failed to marshal private key: %v", err)
-				return
-			}
-
-			privateKeyPath := filepath.Join(t.TempDir(), "private_key")
-			if err := os.WriteFile(privateKeyPath, pem.EncodeToMemory(pemBlock), 0600); err != nil {
-				t.Errorf("failed to write private key to file: %v", err)
-				return
-			}
-
-			t.Run("correct_passphrase_file", func(t *testing.T) {
-				passphraseFilePath := filepath.Join(t.TempDir(), "passphrase")
-				if err := os.WriteFile(passphraseFilePath, []byte("hunter2"), 0600); err != nil {
-					t.Errorf("failed to write passphrase to file: %v", err)
+					t.Errorf("failed to marshal private key: %v", err)
 					return
 				}
 
-				t.Run("without_passphrase_flag", func(t *testing.T) {
+				privateKeyPath := filepath.Join(t.TempDir(), "private_key")
+				if err := os.WriteFile(privateKeyPath, pem.EncodeToMemory(pemBlock), 0600); err != nil {
+					t.Errorf("failed to write private key to file: %v", err)
+					return
+				}
+
+				t.Run("correct_passphrase", func(t *testing.T) {
 					_, err = setupBastionServer(t, "", "", func(srv *Server) error {
 						srv.config.PrivateKeyFile = privateKeyPath
-						srv.config.PrivateKeyPassphrase = ""
-						srv.config.PrivateKeyPassphraseFile = passphraseFilePath
+						srv.config.PrivateKeyPassphrase = "hunter2"
+						srv.config.PrivateKeyPassphraseFile = ""
 						return nil
 					})
 					if err != nil {
@@ -2277,52 +2137,195 @@ func TestBastionSSHServer(t *testing.T) {
 					}
 				})
 
-				t.Run("with_passphrase_flag", func(t *testing.T) {
+				t.Run("wrong_passphrase", func(t *testing.T) {
 					_, err = setupBastionServer(t, "", "", func(srv *Server) error {
 						srv.config.PrivateKeyFile = privateKeyPath
-						srv.config.PrivateKeyPassphrase = "hunter2"
-						srv.config.PrivateKeyPassphraseFile = passphraseFilePath
+						srv.config.PrivateKeyPassphrase = "wrongpass"
+						srv.config.PrivateKeyPassphraseFile = ""
 						return nil
 					})
 					if err == nil {
-						t.Error("expected setup with correct passphrase file and passphrase flag to fail, but it succeeded")
+						t.Error("expected setup with wrong passphrase to fail, but it succeeded")
+						return
+					}
+				})
+
+				t.Run("missing_passphrase", func(t *testing.T) {
+					_, err = setupBastionServer(t, "", "", func(srv *Server) error {
+						srv.config.PrivateKeyFile = privateKeyPath
+						srv.config.PrivateKeyPassphrase = ""
+						srv.config.PrivateKeyPassphraseFile = ""
+						return nil
+					})
+					if err == nil {
+						t.Error("expected setup with missing passphrase to fail, but it succeeded")
 						return
 					}
 				})
 			})
 
-			t.Run("wrong_passphrase_file", func(t *testing.T) {
-				wrongPassphraseFilePath := filepath.Join(t.TempDir(), "passphrase")
-				if err := os.WriteFile(wrongPassphraseFilePath, []byte("wrongpass"), 0600); err != nil {
-					t.Errorf("failed to write passphrase to file: %v", err)
+			t.Run("existing_without_passphrase", func(t *testing.T) {
+				_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+				if err != nil {
+					t.Errorf("failed to generate private key: %v", err)
 					return
 				}
 
+				pemBlock, err := ssh.MarshalPrivateKey(privateKey, "")
+				if err != nil {
+					t.Errorf("failed to marshal private key: %v", err)
+					return
+				}
+
+				privateKeyPath := filepath.Join(t.TempDir(), "private_key")
+				if err := os.WriteFile(privateKeyPath, pem.EncodeToMemory(pemBlock), 0600); err != nil {
+					t.Errorf("failed to write private key to file: %v", err)
+					return
+				}
+
+				t.Run("passphrase", func(t *testing.T) {
+					_, err = setupBastionServer(t, "", "", func(srv *Server) error {
+						srv.config.PrivateKeyFile = privateKeyPath
+						srv.config.PrivateKeyPassphrase = "hunter2"
+						srv.config.PrivateKeyPassphraseFile = ""
+						return nil
+					})
+					if err == nil {
+						t.Error("expected setup with passphrase to fail, but it succeeded")
+						return
+					}
+				})
+
+				t.Run("no_passphrase", func(t *testing.T) {
+					_, err = setupBastionServer(t, "", "", func(srv *Server) error {
+						srv.config.PrivateKeyFile = privateKeyPath
+						srv.config.PrivateKeyPassphrase = ""
+						srv.config.PrivateKeyPassphraseFile = ""
+						return nil
+					})
+					if err != nil {
+						t.Errorf("failed to setup bastion server with existing private key: %v", err)
+						return
+					}
+				})
+			})
+
+			t.Run("missing_with_passphrase", func(t *testing.T) {
+				privateKeyPath := filepath.Join(t.TempDir(), "private_key")
+
 				_, err = setupBastionServer(t, "", "", func(srv *Server) error {
 					srv.config.PrivateKeyFile = privateKeyPath
-					srv.config.PrivateKeyPassphrase = ""
-					srv.config.PrivateKeyPassphraseFile = wrongPassphraseFilePath
+					srv.config.PrivateKeyPassphrase = "hunter2"
+					srv.config.PrivateKeyPassphraseFile = ""
 					return nil
 				})
-				if err == nil {
-					t.Error("expected setup with wrong passphrase file to fail, but it succeeded")
+				if err != nil {
+					t.Errorf("failed to setup bastion server with missing private key: %v", err)
 					return
 				}
 			})
 
-			t.Run("missing_passphrase_file", func(t *testing.T) {
-				missingPassphraseFilePath := filepath.Join(t.TempDir(), "passphrase")
+			t.Run("missing_without_passphrase", func(t *testing.T) {
+				privateKeyPath := filepath.Join(t.TempDir(), "private_key")
 
 				_, err = setupBastionServer(t, "", "", func(srv *Server) error {
 					srv.config.PrivateKeyFile = privateKeyPath
 					srv.config.PrivateKeyPassphrase = ""
-					srv.config.PrivateKeyPassphraseFile = missingPassphraseFilePath
+					srv.config.PrivateKeyPassphraseFile = ""
 					return nil
 				})
-				if err == nil {
-					t.Error("expected setup with missing passphrase file to fail, but it succeeded")
+				if err != nil {
+					t.Errorf("failed to setup bastion server with missing private key: %v", err)
 					return
 				}
+			})
+
+			t.Run("existing_with_passphrase_file", func(t *testing.T) {
+				_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+				if err != nil {
+					t.Errorf("failed to generate private key: %v", err)
+					return
+				}
+
+				pemBlock, err := ssh.MarshalPrivateKeyWithPassphrase(privateKey, "", []byte("hunter2"))
+				if err != nil {
+					t.Errorf("failed to marshal private key: %v", err)
+					return
+				}
+
+				privateKeyPath := filepath.Join(t.TempDir(), "private_key")
+				if err := os.WriteFile(privateKeyPath, pem.EncodeToMemory(pemBlock), 0600); err != nil {
+					t.Errorf("failed to write private key to file: %v", err)
+					return
+				}
+
+				t.Run("correct_passphrase_file", func(t *testing.T) {
+					passphraseFilePath := filepath.Join(t.TempDir(), "passphrase")
+					if err := os.WriteFile(passphraseFilePath, []byte("hunter2"), 0600); err != nil {
+						t.Errorf("failed to write passphrase to file: %v", err)
+						return
+					}
+
+					t.Run("without_passphrase_flag", func(t *testing.T) {
+						_, err = setupBastionServer(t, "", "", func(srv *Server) error {
+							srv.config.PrivateKeyFile = privateKeyPath
+							srv.config.PrivateKeyPassphrase = ""
+							srv.config.PrivateKeyPassphraseFile = passphraseFilePath
+							return nil
+						})
+						if err != nil {
+							t.Errorf("failed to setup bastion server with existing private key: %v", err)
+							return
+						}
+					})
+
+					t.Run("with_passphrase_flag", func(t *testing.T) {
+						_, err = setupBastionServer(t, "", "", func(srv *Server) error {
+							srv.config.PrivateKeyFile = privateKeyPath
+							srv.config.PrivateKeyPassphrase = "hunter2"
+							srv.config.PrivateKeyPassphraseFile = passphraseFilePath
+							return nil
+						})
+						if err == nil {
+							t.Error("expected setup with correct passphrase file and passphrase flag to fail, but it succeeded")
+							return
+						}
+					})
+				})
+
+				t.Run("wrong_passphrase_file", func(t *testing.T) {
+					wrongPassphraseFilePath := filepath.Join(t.TempDir(), "passphrase")
+					if err := os.WriteFile(wrongPassphraseFilePath, []byte("wrongpass"), 0600); err != nil {
+						t.Errorf("failed to write passphrase to file: %v", err)
+						return
+					}
+
+					_, err = setupBastionServer(t, "", "", func(srv *Server) error {
+						srv.config.PrivateKeyFile = privateKeyPath
+						srv.config.PrivateKeyPassphrase = ""
+						srv.config.PrivateKeyPassphraseFile = wrongPassphraseFilePath
+						return nil
+					})
+					if err == nil {
+						t.Error("expected setup with wrong passphrase file to fail, but it succeeded")
+						return
+					}
+				})
+
+				t.Run("missing_passphrase_file", func(t *testing.T) {
+					missingPassphraseFilePath := filepath.Join(t.TempDir(), "passphrase")
+
+					_, err = setupBastionServer(t, "", "", func(srv *Server) error {
+						srv.config.PrivateKeyFile = privateKeyPath
+						srv.config.PrivateKeyPassphrase = ""
+						srv.config.PrivateKeyPassphraseFile = missingPassphraseFilePath
+						return nil
+					})
+					if err == nil {
+						t.Error("expected setup with missing passphrase file to fail, but it succeeded")
+						return
+					}
+				})
 			})
 		})
 	})

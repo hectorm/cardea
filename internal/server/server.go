@@ -2,12 +2,9 @@ package server
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -27,8 +24,10 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 
 	"github.com/hectorm/cardea/internal/config"
+	"github.com/hectorm/cardea/internal/credential"
 	"github.com/hectorm/cardea/internal/ratelimit"
 	"github.com/hectorm/cardea/internal/recorder"
+	"github.com/hectorm/cardea/internal/tpm"
 	"github.com/hectorm/cardea/internal/utils/bytesize"
 	"github.com/hectorm/cardea/internal/utils/disk"
 )
@@ -43,6 +42,7 @@ type Server struct {
 	config               *config.Config
 	sshServerConfig      *ssh.ServerConfig
 	sshClientConfig      *ssh.ClientConfig
+	credentialProvider   credential.Provider
 	signer               ssh.Signer
 	authKeysDB           map[string][]*AuthorizedKeyOptions
 	authKeysMu           sync.RWMutex
@@ -115,12 +115,51 @@ func NewServer(cfg *config.Config, opts ...Option) (*Server, error) {
 		}
 	}
 
-	if srv.signer == nil {
-		signer, err := srv.newPrivateKeySigner(srv.config.PrivateKeyFile, srv.config.PrivateKeyPassphrase, srv.config.PrivateKeyPassphraseFile)
-		if err != nil {
-			return nil, err
+	if srv.credentialProvider == nil {
+		switch srv.config.KeyStrategy {
+		case "file":
+			passphrase, err := config.ResolveSecret(srv.config.PrivateKeyPassphrase, srv.config.PrivateKeyPassphraseFile, "passphrase")
+			if err != nil {
+				return nil, err
+			}
+			provider, err := credential.NewFileKeyProvider(srv.config.PrivateKeyFile, passphrase)
+			if err != nil {
+				return nil, fmt.Errorf("file key: %w", err)
+			}
+			srv.credentialProvider = provider
+		case "tpm":
+			parentHandle, err := tpm.ParseParentHandle(srv.config.TPMParentHandle)
+			if err != nil {
+				return nil, err
+			}
+
+			parentAuth, err := config.ResolveSecret(srv.config.TPMParentAuth, srv.config.TPMParentAuthFile, "parent auth")
+			if err != nil {
+				return nil, err
+			}
+
+			keyAuth, err := config.ResolveSecret(srv.config.TPMKeyAuth, srv.config.TPMKeyAuthFile, "key auth")
+			if err != nil {
+				return nil, err
+			}
+
+			provider, err := credential.NewTPMKeyProvider(
+				srv.config.TPMDevice,
+				srv.config.TPMKeyFile,
+				&tpm.KeyOptions{
+					ParentHandle: parentHandle,
+					ParentAuth:   []byte(parentAuth),
+					KeyAuth:      []byte(keyAuth),
+				},
+			)
+			if err != nil {
+				return nil, fmt.Errorf("tpm key: %w", err)
+			}
+			srv.credentialProvider = provider
+		default:
+			return nil, fmt.Errorf("invalid key-strategy %q", srv.config.KeyStrategy)
 		}
-		srv.signer = signer
+		srv.signer = srv.credentialProvider.Signer()
 	}
 
 	if srv.authKeysDB == nil {
@@ -157,7 +196,6 @@ func NewServer(cfg *config.Config, opts ...Option) (*Server, error) {
 	srv.sshServerConfig.AddHostKey(srv.signer)
 
 	srv.sshClientConfig = &ssh.ClientConfig{
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(srv.signer)},
 		HostKeyCallback: srv.hostKeyCallback,
 		Timeout:         sshConnTimeout,
 	}
@@ -165,9 +203,10 @@ func NewServer(cfg *config.Config, opts ...Option) (*Server, error) {
 	return srv, nil
 }
 
-func WithSigner(signer ssh.Signer) Option {
+func WithCredentialProvider(provider credential.Provider) Option {
 	return func(srv *Server) error {
-		srv.signer = signer
+		srv.credentialProvider = provider
+		srv.signer = provider.Signer()
 		return nil
 	}
 }
@@ -253,6 +292,12 @@ func (srv *Server) Stop() error {
 	if srv.listener != nil {
 		if err := srv.listener.Close(); err != nil {
 			return err
+		}
+	}
+
+	if srv.credentialProvider != nil {
+		if err := srv.credentialProvider.Close(); err != nil {
+			slog.Warn("failed to close credential provider", "error", err)
 		}
 	}
 
@@ -1139,8 +1184,13 @@ func (srv *Server) newFrontendConnection(tcpConn net.Conn) (*ssh.ServerConn, <-c
 }
 
 func (srv *Server) newBackendConnection(permitconnect *PermitConnect) (*ssh.Client, error) {
-	user := permitconnect.User
-	addr := net.JoinHostPort(permitconnect.Host, permitconnect.Port)
+	user, host, port := permitconnect.User, permitconnect.Host, permitconnect.Port
+	addr := net.JoinHostPort(host, port)
+
+	authMethod, err := srv.credentialProvider.GetAuthMethod(srv.ctx, user, host, port)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get auth method: %w", err)
+	}
 
 	dialer := &net.Dialer{Timeout: sshConnTimeout}
 	tcpConn, err := dialer.Dial("tcp", addr)
@@ -1161,6 +1211,7 @@ func (srv *Server) newBackendConnection(permitconnect *PermitConnect) (*ssh.Clie
 
 	sshClientConfig := *srv.sshClientConfig
 	sshClientConfig.User = user
+	sshClientConfig.Auth = []ssh.AuthMethod{authMethod}
 
 	// Populate the client's host key algorithms from known_hosts if available
 	if algos, err := srv.hostKeyAlgorithms(addr); err == nil {
@@ -1177,178 +1228,113 @@ func (srv *Server) newBackendConnection(permitconnect *PermitConnect) (*ssh.Clie
 	return ssh.NewClient(sshConn, chans, reqs), nil
 }
 
-func (srv *Server) newPrivateKeySigner(privateKeyPath, passphrase, passphrasePath string) (ssh.Signer, error) {
-	privateKeyPath = filepath.Clean(privateKeyPath)
-
-	if passphrase == "" && passphrasePath != "" {
-		passphrasePath = filepath.Clean(passphrasePath)
-		if data, err := os.ReadFile(passphrasePath); err == nil {
-			passphrase = strings.TrimSpace(string(data))
-		} else {
-			return nil, err
-		}
-	} else if passphrase != "" && passphrasePath != "" {
-		return nil, fmt.Errorf("cannot specify both passphrase and passphrase file")
-	}
-
-	var signer ssh.Signer
-	if _, err := os.Stat(privateKeyPath); os.IsNotExist(err) {
-		_, privateKey, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			return nil, err
-		}
-
-		var pemBlock *pem.Block
-		if passphrase != "" {
-			pemBlock, err = ssh.MarshalPrivateKeyWithPassphrase(privateKey, "", []byte(passphrase))
-		} else {
-			pemBlock, err = ssh.MarshalPrivateKey(privateKey, "")
-		}
-
-		if err != nil {
-			return nil, err
-		}
-
-		if err := os.WriteFile(privateKeyPath, pem.EncodeToMemory(pemBlock), 0600); err != nil {
-			return nil, err
-		}
-
-		if signer, err = ssh.NewSignerFromKey(privateKey); err != nil {
-			return nil, err
-		}
-	} else if err == nil {
-		pemBytes, err := os.ReadFile(privateKeyPath)
-		if err != nil {
-			return nil, err
-		}
-
-		if passphrase != "" {
-			signer, err = ssh.ParsePrivateKeyWithPassphrase(pemBytes, []byte(passphrase))
-		} else {
-			signer, err = ssh.ParsePrivateKey(pemBytes)
-		}
-
-		if err != nil {
-			if _, ok := err.(*ssh.PassphraseMissingError); ok {
-				return nil, err
-			}
-			return nil, err
-		}
-	} else {
-		return nil, err
-	}
-
-	return signer, nil
-}
-
 func (srv *Server) newAuthorizedKeysDB(path string) (map[string][]*AuthorizedKeyOptions, error) {
 	path = filepath.Clean(path)
 
 	authKeysDB := make(map[string][]*AuthorizedKeyOptions)
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.WriteFile(path, []byte{}, 0600); err != nil {
-			return nil, err
-		}
-	} else if err == nil {
-		authKeysBytes, err := os.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
 
-		lines := strings.Split(string(authKeysBytes), "\n")
-		keyLines := make([]string, 0)
-		macros := make(map[string]string)
-
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			switch {
-			case strings.HasPrefix(line, "#define "):
-				parts := strings.Fields(line)
-				if len(parts) >= 3 {
-					macros[parts[1]] = strings.Join(parts[2:], " ")
-				}
-			case line != "" && !strings.HasPrefix(line, "#"):
-				keyLines = append(keyLines, line)
-			}
-		}
-
-		var replacer *strings.Replacer
-		if len(macros) > 0 {
-			pairs := make([]string, 0, len(macros)*2)
-			for k, v := range macros {
-				pairs = append(pairs, k, v)
-			}
-			replacer = strings.NewReplacer(pairs...)
-		}
-
-	line:
-		for _, line := range keyLines {
-			if replacer != nil {
-				line = replacer.Replace(line)
-			}
-
-			publicKey, _, opts, _, err := ssh.ParseAuthorizedKey([]byte(line))
-			if err != nil {
-				slog.Warn("skipping invalid authorized keys line", "line", line, "error", err)
-				continue line
-			}
-
-			authKeyOpts := &AuthorizedKeyOptions{}
-			for _, opt := range opts {
-				if after, ok := strings.CutPrefix(opt, "permitconnect=\""); ok {
-					for val := range strings.SplitSeq(strings.TrimSuffix(after, "\""), ",") {
-						permitconnect, err := srv.parsePermitConnect(val)
-						if err != nil {
-							slog.Warn("skipping invalid authorized keys line", "line", line, "error", err)
-							continue line
-						}
-						authKeyOpts.PermitConnects = append(authKeyOpts.PermitConnects, *permitconnect)
-					}
-				} else if after, ok := strings.CutPrefix(opt, "permitopen=\""); ok {
-					for val := range strings.SplitSeq(strings.TrimSuffix(after, "\""), ",") {
-						permitopen, err := srv.parsePermitOpen(val)
-						if err != nil {
-							slog.Warn("skipping invalid authorized keys line", "line", line, "error", err)
-							continue line
-						}
-						authKeyOpts.PermitOpens = append(authKeyOpts.PermitOpens, *permitopen)
-					}
-				} else if after, ok := strings.CutPrefix(opt, "permitlisten=\""); ok {
-					for val := range strings.SplitSeq(strings.TrimSuffix(after, "\""), ",") {
-						permitlisten, err := srv.parsePermitListen(val)
-						if err != nil {
-							slog.Warn("skipping invalid authorized keys line", "line", line, "error", err)
-							continue line
-						}
-						authKeyOpts.PermitListens = append(authKeyOpts.PermitListens, *permitlisten)
-					}
-				} else if after, ok := strings.CutPrefix(opt, "command=\""); ok {
-					authKeyOpts.Command = strings.TrimSuffix(after, "\"")
-				} else if opt == "no-port-forwarding" {
-					authKeyOpts.NoPortForwarding = true
-				} else if opt == "no-pty" {
-					authKeyOpts.NoPty = true
-				}
-			}
-
-			if len(authKeyOpts.PermitConnects) == 0 {
-				slog.Warn("skipping authorized keys line without 'permitconnect' option", "line", line)
-				continue line
-			}
-
-			if len(authKeyOpts.PermitOpens) == 0 {
-				authKeyOpts.PermitOpens = []PermitOpen{
-					{Host: "localhost", Port: "1-65535"},
-					{Host: "127.0.0.1/8", Port: "1-65535"},
-					{Host: "::1/128", Port: "1-65535"},
-				}
-			}
-
-			k := string(publicKey.Marshal())
-			authKeysDB[k] = append(authKeysDB[k], authKeyOpts)
-		}
-	} else {
+	if f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600); err == nil {
+		_ = f.Close()
+	} else if !os.IsExist(err) {
 		return nil, err
+	}
+
+	authKeysBytes, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	lines := strings.Split(string(authKeysBytes), "\n")
+	keyLines := make([]string, 0)
+	macros := make(map[string]string)
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "#define "):
+			parts := strings.Fields(line)
+			if len(parts) >= 3 {
+				macros[parts[1]] = strings.Join(parts[2:], " ")
+			}
+		case line != "" && !strings.HasPrefix(line, "#"):
+			keyLines = append(keyLines, line)
+		}
+	}
+
+	var replacer *strings.Replacer
+	if len(macros) > 0 {
+		pairs := make([]string, 0, len(macros)*2)
+		for k, v := range macros {
+			pairs = append(pairs, k, v)
+		}
+		replacer = strings.NewReplacer(pairs...)
+	}
+
+line:
+	for _, line := range keyLines {
+		if replacer != nil {
+			line = replacer.Replace(line)
+		}
+
+		publicKey, _, opts, _, err := ssh.ParseAuthorizedKey([]byte(line))
+		if err != nil {
+			slog.Warn("skipping invalid authorized keys line", "line", line, "error", err)
+			continue line
+		}
+
+		authKeyOpts := &AuthorizedKeyOptions{}
+		for _, opt := range opts {
+			if after, ok := strings.CutPrefix(opt, "permitconnect=\""); ok {
+				for val := range strings.SplitSeq(strings.TrimSuffix(after, "\""), ",") {
+					permitconnect, err := srv.parsePermitConnect(val)
+					if err != nil {
+						slog.Warn("skipping invalid authorized keys line", "line", line, "error", err)
+						continue line
+					}
+					authKeyOpts.PermitConnects = append(authKeyOpts.PermitConnects, *permitconnect)
+				}
+			} else if after, ok := strings.CutPrefix(opt, "permitopen=\""); ok {
+				for val := range strings.SplitSeq(strings.TrimSuffix(after, "\""), ",") {
+					permitopen, err := srv.parsePermitOpen(val)
+					if err != nil {
+						slog.Warn("skipping invalid authorized keys line", "line", line, "error", err)
+						continue line
+					}
+					authKeyOpts.PermitOpens = append(authKeyOpts.PermitOpens, *permitopen)
+				}
+			} else if after, ok := strings.CutPrefix(opt, "permitlisten=\""); ok {
+				for val := range strings.SplitSeq(strings.TrimSuffix(after, "\""), ",") {
+					permitlisten, err := srv.parsePermitListen(val)
+					if err != nil {
+						slog.Warn("skipping invalid authorized keys line", "line", line, "error", err)
+						continue line
+					}
+					authKeyOpts.PermitListens = append(authKeyOpts.PermitListens, *permitlisten)
+				}
+			} else if after, ok := strings.CutPrefix(opt, "command=\""); ok {
+				authKeyOpts.Command = strings.TrimSuffix(after, "\"")
+			} else if opt == "no-port-forwarding" {
+				authKeyOpts.NoPortForwarding = true
+			} else if opt == "no-pty" {
+				authKeyOpts.NoPty = true
+			}
+		}
+
+		if len(authKeyOpts.PermitConnects) == 0 {
+			slog.Warn("skipping authorized keys line without 'permitconnect' option", "line", line)
+			continue line
+		}
+
+		if len(authKeyOpts.PermitOpens) == 0 {
+			authKeyOpts.PermitOpens = []PermitOpen{
+				{Host: "localhost", Port: "1-65535"},
+				{Host: "127.0.0.1/8", Port: "1-65535"},
+				{Host: "::1/128", Port: "1-65535"},
+			}
+		}
+
+		k := string(publicKey.Marshal())
+		authKeysDB[k] = append(authKeysDB[k], authKeyOpts)
 	}
 
 	return authKeysDB, nil
@@ -1357,11 +1343,9 @@ func (srv *Server) newAuthorizedKeysDB(path string) (map[string][]*AuthorizedKey
 func (srv *Server) newHostKeysCB(path string) (ssh.HostKeyCallback, error) {
 	path = filepath.Clean(path)
 
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.WriteFile(path, []byte{}, 0600); err != nil {
-			return nil, err
-		}
-	} else if err != nil {
+	if f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600); err == nil {
+		_ = f.Close()
+	} else if !os.IsExist(err) {
 		return nil, err
 	}
 

@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -14,9 +16,17 @@ import (
 
 type Config struct {
 	Listen                   string
+	KeyStrategy              string
 	PrivateKeyFile           string
 	PrivateKeyPassphrase     string
 	PrivateKeyPassphraseFile string
+	TPMDevice                string
+	TPMParentHandle          string
+	TPMParentAuth            string
+	TPMParentAuthFile        string
+	TPMKeyFile               string
+	TPMKeyAuth               string
+	TPMKeyAuthFile           string
 	AuthorizedKeysFile       string
 	KnownHostsFile           string
 	UnknownHostsPolicy       string
@@ -48,6 +58,13 @@ func NewConfig() *Config {
 	)
 
 	flag.StringVar(
+		&config.KeyStrategy,
+		"key-strategy",
+		env.StringEnv("file", "CARDEA_KEY_STRATEGY"),
+		"key strategy for bastion host/backend authentication: file, tpm (env CARDEA_KEY_STRATEGY)",
+	)
+
+	flag.StringVar(
 		&config.PrivateKeyFile,
 		"private-key-file",
 		env.StringEnv("/etc/cardea/private_key", "CARDEA_PRIVATE_KEY_FILE"),
@@ -66,6 +83,60 @@ func NewConfig() *Config {
 		"private-key-passphrase-file",
 		env.StringEnv("", "CARDEA_PRIVATE_KEY_PASSPHRASE_FILE"),
 		"path to file containing the private key passphrase (env CARDEA_PRIVATE_KEY_PASSPHRASE_FILE)",
+	)
+
+	switch runtime.GOOS {
+	case "linux":
+		flag.StringVar(
+			&config.TPMDevice,
+			"tpm-device",
+			env.StringEnv("/dev/tpmrm0", "CARDEA_TPM_DEVICE"),
+			"path to the TPM device (env CARDEA_TPM_DEVICE)",
+		)
+	case "windows":
+		config.TPMDevice = "tbs"
+	}
+
+	flag.StringVar(
+		&config.TPMParentHandle,
+		"tpm-parent-handle",
+		env.StringEnv("", "CARDEA_TPM_PARENT_HANDLE"),
+		"persistent handle for the parent key (e.g. 0x81000001); if not set, a transient key is created (env CARDEA_TPM_PARENT_HANDLE)",
+	)
+
+	flag.StringVar(
+		&config.TPMParentAuth,
+		"tpm-parent-auth",
+		env.StringEnv("", "CARDEA_TPM_PARENT_AUTH"),
+		"authorization value for the parent key (env CARDEA_TPM_PARENT_AUTH)",
+	)
+
+	flag.StringVar(
+		&config.TPMParentAuthFile,
+		"tpm-parent-auth-file",
+		env.StringEnv("", "CARDEA_TPM_PARENT_AUTH_FILE"),
+		"path to file containing the parent key authorization (env CARDEA_TPM_PARENT_AUTH_FILE)",
+	)
+
+	flag.StringVar(
+		&config.TPMKeyFile,
+		"tpm-key-file",
+		env.StringEnv("/etc/cardea/tpm_key.blob", "CARDEA_TPM_KEY_FILE"),
+		"path to the key blob (env CARDEA_TPM_KEY_FILE)",
+	)
+
+	flag.StringVar(
+		&config.TPMKeyAuth,
+		"tpm-key-auth",
+		env.StringEnv("", "CARDEA_TPM_KEY_AUTH"),
+		"authorization value for the key (env CARDEA_TPM_KEY_AUTH)",
+	)
+
+	flag.StringVar(
+		&config.TPMKeyAuthFile,
+		"tpm-key-auth-file",
+		env.StringEnv("", "CARDEA_TPM_KEY_AUTH_FILE"),
+		"path to file containing the key authorization (env CARDEA_TPM_KEY_AUTH_FILE)",
 	)
 
 	flag.StringVar(
@@ -175,6 +246,19 @@ func NewConfig() *Config {
 	}
 	slog.SetDefault(logger)
 
+	switch config.KeyStrategy {
+	case "file":
+		// ok
+	case "tpm":
+		if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+			slog.Error("tpm support is only available on linux and windows")
+			os.Exit(1)
+		}
+	default:
+		slog.Error("invalid key strategy", "strategy", config.KeyStrategy)
+		os.Exit(1)
+	}
+
 	switch config.UnknownHostsPolicy {
 	case "strict", "tofu":
 		// ok
@@ -184,4 +268,18 @@ func NewConfig() *Config {
 	}
 
 	return config
+}
+
+func ResolveSecret(value, filePath, name string) (string, error) {
+	if value != "" && filePath != "" {
+		return "", fmt.Errorf("cannot specify both %s and %s file", name, name)
+	}
+	if filePath != "" {
+		data, err := os.ReadFile(filepath.Clean(filePath))
+		if err != nil {
+			return "", fmt.Errorf("read %s file: %w", name, err)
+		}
+		return strings.TrimSpace(string(data)), nil
+	}
+	return value, nil
 }
