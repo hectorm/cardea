@@ -1449,7 +1449,7 @@ func (srv *Server) matchHostPattern(pattern, host string) bool {
 		return false
 	}
 
-	if srv.matchShellPattern(pattern, host) {
+	if srv.matchShellPattern(strings.ToLower(pattern), strings.ToLower(host)) {
 		return true
 	}
 

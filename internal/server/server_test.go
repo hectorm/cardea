@@ -315,6 +315,8 @@ func TestBastionSSHServer(t *testing.T) {
 		}{
 			{pattern: fmt.Sprintf("alice@%s", mockAddr), user: fmt.Sprintf("alice@%s", mockAddr), ok: true},
 			{pattern: "alice@127.0.0.1/8:1-65535,alice@[::1/128]:1-65535", user: fmt.Sprintf("alice@%s", mockAddr), ok: true},
+			{pattern: "Alice@*:*", user: fmt.Sprintf("alice@%s", mockAddr), ok: false},
+			{pattern: "*@LocalHost:*", user: "alice@localhost:22", ok: true},
 			{pattern: "*@*:*", user: fmt.Sprintf("alice@%s", mockAddr), ok: true},
 			{pattern: "*+*+*", user: fmt.Sprintf("alice@%s", mockAddr), ok: true},
 			{pattern: "*-*-*", user: fmt.Sprintf("alice@%s", mockAddr), ok: false},
