@@ -4,7 +4,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -172,7 +171,7 @@ func TestBastionSSHServerTPM(t *testing.T) {
 					return
 				}
 
-				authMethod, err := provider.GetAuthMethod(context.Background(), "user", "host", "22")
+				authMethod, err := provider.GetAuthMethod(t.Context(), "user", "host", "22")
 				if err != nil || authMethod == nil {
 					t.Errorf("failed to get auth method: %v", err)
 					return
