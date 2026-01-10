@@ -116,13 +116,11 @@ func (srv *Server) Start() error {
 				}
 			}
 
-			srv.wg.Add(1)
-			go func() {
-				defer srv.wg.Done()
+			srv.wg.Go(func() {
 				if err := srv.handleConnection(conn); err != nil {
 					slog.Error("connection error", "remote_addr", conn.RemoteAddr(), "error", err)
 				}
-			}()
+			})
 		}
 	}()
 
