@@ -509,8 +509,8 @@ func ExecCommand(command string, environ *Environ, wri io.Writer) (uint8, bool) 
 			_, _ = wri.Write([]byte(strings.Join(argv[1:], " ") + "\r\n"))
 		case "printenv":
 			if len(argv) > 1 {
-				for i := 1; i < len(argv); i++ {
-					if val, exists := environ.Get(argv[i]); exists {
+				for _, arg := range argv[1:] {
+					if val, exists := environ.Get(arg); exists {
 						_, _ = fmt.Fprintf(wri, "%s\r\n", val)
 					}
 				}
