@@ -20,10 +20,13 @@ jobs:
     steps:
       - name: "Checkout"
         uses: "actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8"
+      - name: "Get Go version"
+        id: "go-version"
+        uses: "./.github/actions/go-version"
       - name: "Set up Go"
         uses: "actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c"
         with:
-          go-version-file: "./go.mod"
+          go-version: "${{ steps.go-version.outputs.version }}"
           check-latest: true
       - name: "Run gofmt"
         run: |
@@ -39,10 +42,13 @@ jobs:
     steps:
       - name: "Checkout"
         uses: "actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8"
+      - name: "Get Go version"
+        id: "go-version"
+        uses: "./.github/actions/go-version"
       - name: "Set up Go"
         uses: "actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c"
         with:
-          go-version-file: "./go.mod"
+          go-version: "${{ steps.go-version.outputs.version }}"
           check-latest: true
       - name: "Install gosec"
         run: |
@@ -59,10 +65,13 @@ jobs:
     steps:
       - name: "Checkout"
         uses: "actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8"
+      - name: "Get Go version"
+        id: "go-version"
+        uses: "./.github/actions/go-version"
       - name: "Set up Go"
         uses: "actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c"
         with:
-          go-version-file: "./go.mod"
+          go-version: "${{ steps.go-version.outputs.version }}"
           check-latest: true
       - name: "Install staticcheck"
         run: |
@@ -84,10 +93,13 @@ jobs:
     steps:
       - name: "Checkout"
         uses: "actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8"
+      - name: "Get Go version"
+        id: "go-version"
+        uses: "./.github/actions/go-version"
       - name: "Set up Go"
         uses: "actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c"
         with:
-          go-version-file: "./go.mod"
+          go-version: "${{ steps.go-version.outputs.version }}"
           check-latest: true
       - name: "Install native dependencies (Linux)"
         if: "runner.os == 'Linux'"
@@ -148,10 +160,13 @@ jobs:
           fetch-depth: 0
       - name: "Set SOURCE_DATE_EPOCH"
         run: printf 'SOURCE_DATE_EPOCH=%s\n' "$(git log -1 --format=%ct)" >> "${GITHUB_ENV:?}"
+      - name: "Get Go version"
+        id: "go-version"
+        uses: "./.github/actions/go-version"
       - name: "Set up Go"
         uses: "actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c"
         with:
-          go-version-file: "./go.mod"
+          go-version: "${{ steps.go-version.outputs.version }}"
           check-latest: true
       - name: "Build"
         run: |
