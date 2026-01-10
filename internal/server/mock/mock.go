@@ -623,9 +623,7 @@ func (shell *InteractiveShell) handleInput(char byte) (uint8, bool) {
 			} else {
 				rem := string(shell.line[shell.cursor:])
 				_, _ = shell.channel.Write([]byte("\b" + rem + " "))
-				for i := 0; i < len(rem)+1; i++ {
-					_, _ = shell.channel.Write([]byte("\b"))
-				}
+				_, _ = shell.channel.Write([]byte(strings.Repeat("\b", len(rem)+1)))
 			}
 		}
 	case 0x0D: // Carriage Return
@@ -646,9 +644,7 @@ func (shell *InteractiveShell) handleInput(char byte) (uint8, bool) {
 				rem := string(shell.line[shell.cursor:])
 				_, _ = shell.channel.Write([]byte{char})
 				_, _ = shell.channel.Write([]byte(rem))
-				for i := 0; i < len(rem); i++ {
-					_, _ = shell.channel.Write([]byte("\b"))
-				}
+				_, _ = shell.channel.Write([]byte(strings.Repeat("\b", len(rem))))
 			}
 		}
 	}
