@@ -60,36 +60,6 @@ type Server struct {
 	wg                   sync.WaitGroup
 }
 
-type AuthorizedKeyOptions struct {
-	PermitConnects   []PermitConnect `json:"permit_connects"`
-	PermitOpens      []PermitOpen    `json:"permit_opens"`
-	PermitListens    []PermitListen  `json:"permit_listens"`
-	Command          string          `json:"command"`
-	NoPortForwarding bool            `json:"no_port_forwarding"`
-	NoPty            bool            `json:"no_pty"`
-}
-
-type PermitConnect struct {
-	User string `json:"user"`
-	Host string `json:"host"`
-	Port string `json:"port"`
-}
-
-type PermitOpen struct {
-	Host string `json:"host"`
-	Port string `json:"port"`
-}
-
-type PermitListen struct {
-	Host string `json:"host"`
-	Port string `json:"port"`
-}
-
-type HostCertAuthority struct {
-	Patterns []string
-	Key      ssh.PublicKey
-}
-
 var bufferPool = sync.Pool{
 	New: func() any {
 		return make([]byte, 32*1024)
@@ -385,7 +355,7 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 	}
 	defer func() { _ = frontendConn.Close() }()
 
-	permitconnect, err := srv.parsePermitConnect(frontendConn.User())
+	permitconnect, err := parsePermitConnect(frontendConn.User())
 	if err != nil {
 		return err
 	}
@@ -1003,7 +973,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 		return nil, fmt.Errorf("public key not authorized")
 	}
 
-	backend, err := srv.parsePermitConnect(conn.User())
+	backend, err := parsePermitConnect(conn.User())
 	if err != nil {
 		slog.Info("access denied, invalid backend format",
 			"backend", conn.User(),
@@ -1226,198 +1196,6 @@ func (srv *Server) newBackendConnection(permitconnect *PermitConnect) (*ssh.Clie
 	}
 
 	return ssh.NewClient(sshConn, chans, reqs), nil
-}
-
-func (srv *Server) newAuthorizedKeysDB(path string) (map[string][]*AuthorizedKeyOptions, error) {
-	path = filepath.Clean(path)
-
-	authKeysDB := make(map[string][]*AuthorizedKeyOptions)
-
-	if f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600); err == nil {
-		_ = f.Close()
-	} else if !os.IsExist(err) {
-		return nil, err
-	}
-
-	authKeysBytes, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	lines := strings.Split(string(authKeysBytes), "\n")
-	keyLines := make([]string, 0)
-	macros := make(map[string]string)
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		switch {
-		case strings.HasPrefix(line, "#define "):
-			parts := strings.Fields(line)
-			if len(parts) >= 3 {
-				macros[parts[1]] = strings.Join(parts[2:], " ")
-			}
-		case line != "" && !strings.HasPrefix(line, "#"):
-			keyLines = append(keyLines, line)
-		}
-	}
-
-	var replacer *strings.Replacer
-	if len(macros) > 0 {
-		pairs := make([]string, 0, len(macros)*2)
-		for k, v := range macros {
-			pairs = append(pairs, k, v)
-		}
-		replacer = strings.NewReplacer(pairs...)
-	}
-
-line:
-	for _, line := range keyLines {
-		if replacer != nil {
-			line = replacer.Replace(line)
-		}
-
-		publicKey, _, opts, _, err := ssh.ParseAuthorizedKey([]byte(line))
-		if err != nil {
-			slog.Warn("skipping invalid authorized keys line", "line", line, "error", err)
-			continue line
-		}
-
-		authKeyOpts := &AuthorizedKeyOptions{}
-		for _, opt := range opts {
-			if after, ok := strings.CutPrefix(opt, "permitconnect=\""); ok {
-				for val := range strings.SplitSeq(strings.TrimSuffix(after, "\""), ",") {
-					permitconnect, err := srv.parsePermitConnect(val)
-					if err != nil {
-						slog.Warn("skipping invalid authorized keys line", "line", line, "error", err)
-						continue line
-					}
-					authKeyOpts.PermitConnects = append(authKeyOpts.PermitConnects, *permitconnect)
-				}
-			} else if after, ok := strings.CutPrefix(opt, "permitopen=\""); ok {
-				for val := range strings.SplitSeq(strings.TrimSuffix(after, "\""), ",") {
-					permitopen, err := srv.parsePermitOpen(val)
-					if err != nil {
-						slog.Warn("skipping invalid authorized keys line", "line", line, "error", err)
-						continue line
-					}
-					authKeyOpts.PermitOpens = append(authKeyOpts.PermitOpens, *permitopen)
-				}
-			} else if after, ok := strings.CutPrefix(opt, "permitlisten=\""); ok {
-				for val := range strings.SplitSeq(strings.TrimSuffix(after, "\""), ",") {
-					permitlisten, err := srv.parsePermitListen(val)
-					if err != nil {
-						slog.Warn("skipping invalid authorized keys line", "line", line, "error", err)
-						continue line
-					}
-					authKeyOpts.PermitListens = append(authKeyOpts.PermitListens, *permitlisten)
-				}
-			} else if after, ok := strings.CutPrefix(opt, "command=\""); ok {
-				authKeyOpts.Command = strings.TrimSuffix(after, "\"")
-			} else if opt == "no-port-forwarding" {
-				authKeyOpts.NoPortForwarding = true
-			} else if opt == "no-pty" {
-				authKeyOpts.NoPty = true
-			}
-		}
-
-		if len(authKeyOpts.PermitConnects) == 0 {
-			slog.Warn("skipping authorized keys line without 'permitconnect' option", "line", line)
-			continue line
-		}
-
-		if len(authKeyOpts.PermitOpens) == 0 {
-			authKeyOpts.PermitOpens = []PermitOpen{
-				{Host: "localhost", Port: "1-65535"},
-				{Host: "127.0.0.1/8", Port: "1-65535"},
-				{Host: "::1/128", Port: "1-65535"},
-			}
-		}
-
-		k := string(publicKey.Marshal())
-		authKeysDB[k] = append(authKeysDB[k], authKeyOpts)
-	}
-
-	return authKeysDB, nil
-}
-
-func (srv *Server) newHostKeysCB(path string) (ssh.HostKeyCallback, error) {
-	path = filepath.Clean(path)
-
-	if f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600); err == nil {
-		_ = f.Close()
-	} else if !os.IsExist(err) {
-		return nil, err
-	}
-
-	hostKeysCB, err := knownhosts.New(path)
-	if err != nil {
-		return nil, err
-	}
-	return hostKeysCB, nil
-}
-
-func (srv *Server) parsePermitConnect(permitconnect string) (*PermitConnect, error) {
-	if permitconnect != "" && len(permitconnect) < 1024 {
-		// Try format <user>@<host>[:<port>]
-		if i := strings.LastIndex(permitconnect, "@"); i != -1 {
-			user, addr := permitconnect[:i], permitconnect[i+1:]
-			host, port, err := net.SplitHostPort(addr)
-			if err == nil && user != "" && host != "" && port != "" {
-				return &PermitConnect{User: user, Host: host, Port: port}, nil
-			} else if user != "" && addr != "" {
-				host := strings.TrimSuffix(strings.TrimPrefix(addr, "["), "]")
-				if ip := net.ParseIP(host); ip != nil {
-					return &PermitConnect{User: user, Host: ip.String(), Port: "22"}, nil
-				} else if host != "" && !strings.Contains(host, ":") {
-					return &PermitConnect{User: user, Host: host, Port: "22"}, nil
-				}
-			}
-		}
-
-		// Try format <user>+<host>[+<port>]
-		if parts := strings.Split(permitconnect, "+"); len(parts) == 3 {
-			user, host, port := parts[0], parts[1], parts[2]
-			host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
-			_, _, err := net.SplitHostPort(net.JoinHostPort(host, port))
-			if err == nil && user != "" && host != "" && port != "" {
-				return &PermitConnect{User: user, Host: host, Port: port}, nil
-			}
-		} else if len(parts) == 2 {
-			user, host := parts[0], parts[1]
-			host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
-			if user != "" && host != "" {
-				if ip := net.ParseIP(host); ip != nil {
-					return &PermitConnect{User: user, Host: ip.String(), Port: "22"}, nil
-				} else if host != "" && !strings.Contains(host, ":") {
-					return &PermitConnect{User: user, Host: host, Port: "22"}, nil
-				}
-			}
-		}
-	}
-
-	return nil, fmt.Errorf("invalid permitconnect format, expected <user>@<host>[:<port>] or <user>+<host>[+<port>], got %s", permitconnect)
-}
-
-func (srv *Server) parsePermitOpen(permitopen string) (*PermitOpen, error) {
-	if permitopen != "" && len(permitopen) < 512 {
-		host, port, err := net.SplitHostPort(permitopen)
-		if err == nil && host != "" && port != "" {
-			return &PermitOpen{Host: host, Port: port}, nil
-		}
-	}
-
-	return nil, fmt.Errorf("invalid permitopen format, expected <host>:<port>, got %s", permitopen)
-}
-
-func (srv *Server) parsePermitListen(permitlisten string) (*PermitListen, error) {
-	if permitlisten != "" && len(permitlisten) < 512 {
-		host, port, err := net.SplitHostPort(permitlisten)
-		if err == nil && host != "" && port != "" {
-			return &PermitListen{Host: host, Port: port}, nil
-		}
-	}
-
-	return nil, fmt.Errorf("invalid permitlisten format, expected <host>:<port>, got %s", permitlisten)
 }
 
 func (srv *Server) matchUserPattern(pattern, user string) bool {

@@ -1686,13 +1686,17 @@ func TestBastionSSHServer(t *testing.T) {
 	})
 
 	t.Run("authorized_keys_db", func(t *testing.T) {
-		cliPublicKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"))
-		if err != nil {
-			t.Errorf("failed to parse authorized key: %v", err)
-			return
-		}
-		cliPublicKeyStr := string(cliPublicKey.Marshal())
-		cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
+		aliceKey, _, _, _, _ := ssh.ParseAuthorizedKey([]byte("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA alice"))
+		aliceKeyStr := string(aliceKey.Marshal())
+		aliceKeyAuth := marshalAuthorizedKey(aliceKey)
+
+		bobKey, _, _, _, _ := ssh.ParseAuthorizedKey([]byte("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA bob"))
+		bobKeyStr := string(bobKey.Marshal())
+		bobKeyAuth := marshalAuthorizedKey(bobKey)
+
+		carolKey, _, _, _, _ := ssh.ParseAuthorizedKey([]byte("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC carol"))
+		carolKeyStr := string(carolKey.Marshal())
+		carolKeyAuth := marshalAuthorizedKey(carolKey)
 
 		tests := []struct {
 			content  string
@@ -1700,61 +1704,1130 @@ func TestBastionSSHServer(t *testing.T) {
 		}{
 			{
 				content: fmt.Sprintf(`
-					#define PUBLIC_KEY %s
-					invalid-key
-					# Line comment 1
-					permitconnect="*@192.168.0.0/16:22",permitconnect="*@172.16.0.0/12:22",permitopen="*:80,*:443",no-port-forwarding PUBLIC_KEY
-					# Line comment 2
-					permitconnect="*@10.0.0.0/8:22,*@10.0.0.0/8:2222",permitopen="*:80,*:443",permitopen="*:8080",permitopen="*:8880",command="nologin",no-pty PUBLIC_KEY
-					# Line comment 3
-				`, cliAuthorizedKeyStr),
+				#define ALICE_KEY %s
+				#define BOB_KEY %s
+				#define CAROL_KEY %s
+
+				# "#define" with no name is ignored
+				#define
+
+				# "#invalid" directive is ignored
+				#invalid SOMETHING
+
+				# Comment with pipe (|) in it
+
+				# [T1] Single permitconnect entry
+				permitconnect="*@basic.example.com:22" ALICE_KEY
+
+				# [T2] Multiple permitconnect values
+				permitconnect="*@192.168.0.0/16:22,*@172.16.0.0/12:22" BOB_KEY
+
+				# [T3] Explicit permitopen option
+				permitconnect="*@permitopen.example.com:22",permitopen="*:80,*:443" CAROL_KEY
+
+				# [T4] Alternative user+host+port format
+				permitconnect="*+altformat.example.com+2222" ALICE_KEY
+
+				# [T5] IPv6 address in permitconnect value
+				permitconnect="*@[2001:db8::1]:22" BOB_KEY
+
+				# [T6] Option: no-pty
+				permitconnect="*@no-pty.example.com:22",no-pty CAROL_KEY
+
+				# [T7] Option: no-port-forwarding
+				permitconnect="*@no-port-fwd.example.com:22",no-port-forwarding ALICE_KEY
+
+				# [T8] Option: command
+				permitconnect="*@command.example.com:22",command="internal-sftp" BOB_KEY
+
+				# [T9] Option: permitlisten
+				permitconnect="*@permitlisten.example.com:22",permitlisten="localhost:8080" CAROL_KEY
+
+				# [T10] Macro expansion for key
+				permitconnect="*@macro-key.example.com:22" ALICE_KEY
+
+				# [T11] Macro expansion in permitconnect value
+				#define T11_SERVERS *@10.0.1.0/24:22,*@macro-value.example.com:22
+				permitconnect="T11_SERVERS" BOB_KEY
+
+				# [T12] Multi-line macro expansion in permitconnect value
+				#define T12_SERVERS \
+					# dev network
+					*@10.0.0.0/24:22, \
+					# dev server
+					*@multiline-macro.example.com:22
+				permitconnect="T12_SERVERS" CAROL_KEY
+
+				# [T13] Composed macro expansion in permitconnect value
+				#define T13_SERVERS T12_SERVERS,T11_SERVERS
+				permitconnect="T13_SERVERS" ALICE_KEY
+
+				# [T14] Nested macro expansion within depth limit
+				#define T14_L0 T14_L1
+				#define T14_L1 T14_L2
+				#define T14_L2 T14_L3
+				#define T14_L3 T14_L4
+				#define T14_L4 T14_L5
+				#define T14_L5 T14_L6
+				#define T14_L6 T14_L7
+				#define T14_L7 T14_L8
+				#define T14_L8 ALICE_KEY
+				permitconnect="*@nested-macro.example.com:22" T14_L0
+
+				# [T15] Line continuation with LF
+				permitconnect="*@line-cont-lf.example.com:22",permitopen="*:80,*:443" \
+					# comment
+					BOB_KEY
+
+				# [T16] Line continuation with CRLF
+				permitconnect="*@line-cont-crlf.example.com:22",permitopen="*:80,*:443" `+"\\\r\n"+`CAROL_KEY
+
+				# [T17] Comment with CRLF ending`+"\r\n"+`permitconnect="*@crlf-comment.example.com:22" ALICE_KEY
+
+				# [T18] Inline comment on #define for a key
+				#define T18_KEY ALICE_KEY # This is an inline comment
+				permitconnect="*@inline-define-key.example.com:22" T18_KEY
+
+				# [T19] Inline comment on #define for composed macro with pipe
+				#define T19_TEAM ALICE_KEY | BOB_KEY # Team with inline comment
+				permitconnect="*@inline-define-team.example.com:22" T19_TEAM
+
+				# [T20] Inline comment at end of multi-line #define
+				#define T20_SERVERS \
+					*@inline-multiline-1.example.com:22, \
+					*@inline-multiline-2.example.com:22 # Inline comment at end of multi-line
+				permitconnect="T20_SERVERS" ALICE_KEY
+
+				# [T21] Inline comment on access rule
+				permitconnect="*@inline-rule.example.com:22" ALICE_KEY # Rule with inline comment
+
+				# [T22] Inline comment on access rule with pipe expansion
+				permitconnect="*@inline-rule-pipe.example.com:22" ALICE_KEY | BOB_KEY # Rule with pipe and inline comment
+
+				# [T23] Pipe expansion with consecutive line continuations
+				permitconnect="*@pipe-continuation.example.com:22" ALICE_KEY \
+					\
+					\
+					| CAROL_KEY
+
+				# [T24] Macro containing pipe operator
+				#define T24_TEAM ALICE_KEY | T24_DEFERRED
+				#define T24_DEFERRED BOB_KEY
+				permitconnect="*@macro-pipe.example.com:22" T24_TEAM
+
+				# [T25] Pipe character inside quoted command
+				permitconnect="*@pipe-in-command.example.com:22",command="echo hello | grep h" BOB_KEY
+
+				# [T26] Escaped quotes in command value
+				permitconnect="*@escaped-quotes.example.com:22",command="echo \"hello\"" CAROL_KEY
+
+				# [T27] Escaped backslash in command value
+				permitconnect="*@escaped-backslash.example.com:22",command="echo C:\\path\\file" ALICE_KEY
+
+				# [T28] Multiple entries for same key
+				permitconnect="*@multi-entry-1.example.com:22" ALICE_KEY
+				permitconnect="*@multi-entry-2.example.com:22" ALICE_KEY
+
+				# [T29] Empty pipe segments
+				|permitconnect="*@empty-pipes.example.com:22" ALICE_KEY||BOB_KEY|||CAROL_KEY|
+
+				# [T30] Empty macro value
+				#define T30_EMPTY
+				permitconnect="*@empty-macro.example.com:22" T30_EMPTY ALICE_KEY
+
+				# [T31] Whitespace-padded macro value
+				#define T31_PADDED   *@padded-macro.example.com:22
+				permitconnect="T31_PADDED" ALICE_KEY
+
+				# [T32] Macro redefinition: last definition wins
+				#define T32_REDEF *@redef-first.example.com:22
+				#define T32_REDEF *@redef-last.example.com:22
+				permitconnect="T32_REDEF" ALICE_KEY
+
+				# [T33] Macro redefinition: sequential processing
+				#define T33_SEQ *@seq-first.example.com:22
+				permitconnect="T33_SEQ" ALICE_KEY
+				#define T33_SEQ *@seq-second.example.com:22
+				permitconnect="T33_SEQ" BOB_KEY
+
+				# [T34] Macro token boundary matching
+				#define T34_ALICE BOB_KEY
+				#define T34_AAAAC should_not_match
+				permitconnect="*@token-boundary.example.com:22" ALICE_KEY
+
+				# [T35] Tab separator in #define
+				#define	T35_TAB *@tab-define.example.com:22
+				permitconnect="T35_TAB" ALICE_KEY
+
+				# [T36] Underscore-prefixed macro
+				#define _T36_UNDERSCORE *@underscore-prefix.example.com:22
+				permitconnect="_T36_UNDERSCORE" ALICE_KEY
+
+				# [T37] Alphanumeric macro name
+				#define T37_SERVER_123 *@alphanumeric-name.example.com:22
+				permitconnect="T37_SERVER_123" ALICE_KEY
+
+				# [T38] Macro at EOF without trailing newline
+				#define T38_EOF *@eof-no-newline.example.com:22
+				permitconnect="T38_EOF" ALICE_KEY
+
+				# [T39] Hash character in quoted value
+				permitconnect="#user@hash#host.example.com:22",command="echo # not a comment" ALICE_KEY # a comment
+
+				# [T40] Macro expansion with adjacent hash character
+				#define T40_HOST hash-adjacent.example.com
+				permitconnect="*@T40_HOST:22,*@other#host.example.com:22" ALICE_KEY
+
+				# [T41] Unclosed quote line isolation
+				permitconnect="*@unclosed-quote.example.com:22" BOB_KEY unclosed="value
+				permitconnect="*@after-unclosed.example.com:22" ALICE_KEY
+
+				# [T42] Option template macro
+				#define T42_OPTS command="internal-sftp",no-pty
+				permitconnect="*@opts-template.example.com:22",T42_OPTS ALICE_KEY
+
+				# [T43] Parameterized hostname via nested expansion
+				#define T43_ENV prod
+				#define T43_REGION us
+				#define T43_HOST app.T43_ENV.T43_REGION.example.com
+				permitconnect="*@T43_HOST:22" BOB_KEY
+
+				# [T44] Hierarchical server groups
+				#define T44_TIER1 *@hierarchy-1.example.com:22
+				#define T44_TIER2 T44_TIER1,*@hierarchy-2.example.com:22
+				permitconnect="T44_TIER2" CAROL_KEY
+
+				# [T45] Full-line template macro
+				#define T45_LINE permitconnect="*@line-template.example.com:22"
+				T45_LINE ALICE_KEY
+
+				# [T46] Option composition macro
+				#define T46_NO_PTY no-pty
+				#define T46_NO_FWD no-port-forwarding
+				#define T46_OPTS T46_NO_PTY,T46_NO_FWD
+				permitconnect="*@opts-composed.example.com:22",T46_OPTS BOB_KEY
+
+				# [T47] Port abstraction macro
+				#define T47_PORT 22
+				#define T47_HOST port-abstract.example.com
+				permitconnect="*@T47_HOST:T47_PORT" CAROL_KEY
+
+				# [T48] User pattern macro
+				#define T48_USER admin
+				permitconnect="T48_USER@user-pattern.example.com:22" ALICE_KEY
+
+				# [T49] Macro in multiple option values
+				#define T49_HOST multi-option.example.com
+				permitconnect="*@T49_HOST:22",permitopen="T49_HOST:80" BOB_KEY
+
+				# [T50] Nested team composition
+				#define T50_SUBTEAM_A ALICE_KEY
+				#define T50_SUBTEAM_B BOB_KEY | CAROL_KEY
+				#define T50_TEAM T50_SUBTEAM_A | T50_SUBTEAM_B
+				permitconnect="*@nested-team.example.com:22" T50_TEAM
+				`, aliceKeyAuth, bobKeyAuth, carolKeyAuth),
 				expected: map[string][]*AuthorizedKeyOptions{
-					cliPublicKeyStr: {
+					aliceKeyStr: {
+						// [T1]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "basic.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T4]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "altformat.example.com", Port: "2222"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T7]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "no-port-fwd.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+							NoPortForwarding: true,
+						},
+						// [T10]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "macro-key.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T13]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "10.0.0.0/24", Port: "22"},
+								{User: "*", Host: "multiline-macro.example.com", Port: "22"},
+								{User: "*", Host: "10.0.1.0/24", Port: "22"},
+								{User: "*", Host: "macro-value.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T14]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "nested-macro.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T17]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "crlf-comment.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T18]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "inline-define-key.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T19]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "inline-define-team.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T20]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "inline-multiline-1.example.com", Port: "22"},
+								{User: "*", Host: "inline-multiline-2.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T21]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "inline-rule.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T22]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "inline-rule-pipe.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T23]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "pipe-continuation.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T24]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "macro-pipe.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T27]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "escaped-backslash.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+							Command: `echo C:\\path\\file`,
+						},
+						// [T28]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "multi-entry-1.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T28]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "multi-entry-2.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T29]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "empty-pipes.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T30]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "empty-macro.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T31]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "padded-macro.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T32] Macro redefinition: last definition wins
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "redef-last.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T33] Macro redefinition: sequential processing (sees first definition)
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "seq-first.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T34]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "token-boundary.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T35]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "tab-define.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T36]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "underscore-prefix.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T37]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "alphanumeric-name.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T38]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "eof-no-newline.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T39]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "#user", Host: "hash#host.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+							Command: "echo # not a comment",
+						},
+						// [T40]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "hash-adjacent.example.com", Port: "22"},
+								{User: "*", Host: "other#host.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T41]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "after-unclosed.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T42]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "opts-template.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+							Command: "internal-sftp",
+							NoPty:   true,
+						},
+						// [T45]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "line-template.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T48]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "admin", Host: "user-pattern.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T50]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "nested-team.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+					},
+					bobKeyStr: {
+						// [T2]
 						{
 							PermitConnects: []PermitConnect{
 								{User: "*", Host: "192.168.0.0/16", Port: "22"},
 								{User: "*", Host: "172.16.0.0/12", Port: "22"},
 							},
 							PermitOpens: []PermitOpen{
-								{Host: "*", Port: "80"},
-								{Host: "*", Port: "443"},
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
 							},
-							Command:          "",
-							NoPortForwarding: true,
-							NoPty:            false,
 						},
+						// [T5]
 						{
 							PermitConnects: []PermitConnect{
-								{User: "*", Host: "10.0.0.0/8", Port: "22"},
-								{User: "*", Host: "10.0.0.0/8", Port: "2222"},
+								{User: "*", Host: "2001:db8::1", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T8]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "command.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+							Command: "internal-sftp",
+						},
+						// [T11]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "10.0.1.0/24", Port: "22"},
+								{User: "*", Host: "macro-value.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T15]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "line-cont-lf.example.com", Port: "22"},
 							},
 							PermitOpens: []PermitOpen{
 								{Host: "*", Port: "80"},
 								{Host: "*", Port: "443"},
-								{Host: "*", Port: "8080"},
-								{Host: "*", Port: "8880"},
 							},
-							Command:          "nologin",
-							NoPortForwarding: false,
+						},
+						// [T19]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "inline-define-team.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T22]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "inline-rule-pipe.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T24]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "macro-pipe.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T25]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "pipe-in-command.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+							Command: "echo hello | grep h",
+						},
+						// [T29]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "empty-pipes.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T33] Macro redefinition: sequential processing (sees second definition)
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "seq-second.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T41]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "unclosed-quote.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T43]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "app.prod.us.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T46]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "opts-composed.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
 							NoPty:            true,
+							NoPortForwarding: true,
+						},
+						// [T49]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "multi-option.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "multi-option.example.com", Port: "80"},
+							},
+						},
+						// [T50]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "nested-team.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+					},
+					carolKeyStr: {
+						// [T3]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "permitopen.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "*", Port: "80"},
+								{Host: "*", Port: "443"},
+							},
+						},
+						// [T6]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "no-pty.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+							NoPty: true,
+						},
+						// [T9]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "permitlisten.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+							PermitListens: []PermitListen{
+								{Host: "localhost", Port: "8080"},
+							},
+						},
+						// [T12]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "10.0.0.0/24", Port: "22"},
+								{User: "*", Host: "multiline-macro.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T16]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "line-cont-crlf.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "*", Port: "80"},
+								{Host: "*", Port: "443"},
+							},
+						},
+						// [T23]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "pipe-continuation.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T26]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "escaped-quotes.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+							Command: `echo "hello"`,
+						},
+						// [T29]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "empty-pipes.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T44]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "hierarchy-1.example.com", Port: "22"},
+								{User: "*", Host: "hierarchy-2.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T47]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "port-abstract.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+						},
+						// [T50]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "nested-team.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
 						},
 					},
 				},
 			},
+			// Empty file content
 			{
-				content:  `invalid-key`,
+				content:  ``,
 				expected: map[string][]*AuthorizedKeyOptions{},
 			},
+			// Whitespace-only file content
 			{
-				content:  cliAuthorizedKeyStr,
+				content:  `   `,
 				expected: map[string][]*AuthorizedKeyOptions{},
 			},
+			// Tabs and newlines only content
 			{
-				content:  fmt.Sprintf(`permitconnect="invalid" %s`, cliAuthorizedKeyStr),
+				content:  "\t\n\t\n",
 				expected: map[string][]*AuthorizedKeyOptions{},
 			},
+			// Comment-only content
 			{
-				content:  fmt.Sprintf(`permitconnect="alice@127.0.0.1:22",permitopen="invalid" %s`, cliAuthorizedKeyStr),
+				content:  "# comment only\n# another comment",
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid SSH key format
+			{
+				content:  `permitconnect="*@example.com:22" invalid`,
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// SSH key without any options
+			{
+				content:  aliceKeyAuth,
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Options without permitconnect
+			{
+				content:  fmt.Sprintf(`command="nologin" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Empty permitconnect value
+			{
+				content:  fmt.Sprintf(`permitconnect="" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid permitconnect format
+			{
+				content:  fmt.Sprintf(`permitconnect="invalid" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Empty permitopen value
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",permitopen="" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid permitopen format
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",permitopen="invalid" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Empty permitlisten value
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",permitlisten="" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid permitlisten format
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",permitlisten="invalid" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Permitconnect value exceeding length limit
+			{
+				content:  fmt.Sprintf(`permitconnect="*@%s:22" %s`, strings.Repeat("a", 1100), aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Unterminated quoted string
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22 %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// CRLF inside quoted string
+			{
+				content:  fmt.Sprintf("permitconnect=\"*@example.com:22\",command=\"echo \r\ntest\" %s", aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Trailing backslash at EOF
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22" %s\`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Backslash-space before newline
+			{
+				content:  fmt.Sprintf("permitconnect=\"*@example.com:22\" \\ \n%s", aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Line continuation at EOF without key
+			{
+				content:  `permitconnect="*@example.com:22" \`,
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Pipe-only content
+			{
+				content:  "|",
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Pipe with whitespace-only segments
+			{
+				content:  `   |   |   `,
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Pipe segment without options
+			{
+				content:  fmt.Sprintf(`%s | %s`, aliceKeyAuth, bobKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Options on non-first pipe segment
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22" %s | permitconnect="*@other.com:22" %s`, aliceKeyAuth, bobKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid key in pipe segment
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22" %s | invalid`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid key in middle pipe segment
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22" %s | invalid | %s`, aliceKeyAuth, bobKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// #define without whitespace separator
+			{
+				content: `
+				#defineX MACRO value
+				permitconnect="*@example.com:22" MACRO
+				`,
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Macro name with leading digit
+			{
+				content: fmt.Sprintf(`
+				#define ALICE_KEY %s
+				#define 1BAD_KEY %s
+				permitconnect="*@example.com:22" 1BAD_KEY
+				`, aliceKeyAuth, bobKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Macro name with non-ASCII character
+			{
+				content: fmt.Sprintf(`
+				#define ALICE_KEY %s
+				#define BÄD_KEY %s
+				permitconnect="*@example.com:22" BÄD_KEY
+				`, aliceKeyAuth, bobKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Self-referential macro
+			{
+				content: fmt.Sprintf(`
+				#define ALICE_KEY %s
+				#define INFINITE INFINITE
+				permitconnect="*@example.com:22" INFINITE
+				`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Self-referential macro in quoted value
+			{
+				content: fmt.Sprintf(`
+				#define ALICE_KEY %s
+				#define INFINITE INFINITE
+				permitconnect="INFINITE" ALICE_KEY
+				`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Mutually recursive macros
+			{
+				content: `
+				#define A B
+				#define B A
+				permitconnect="*@example.com:22" A
+				`,
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Macro recursion exceeding depth limit
+			{
+				content: fmt.Sprintf(`
+				#define ALICE_KEY %s
+				#define L0 L1
+				#define L1 L2
+				#define L2 L3
+				#define L3 L4
+				#define L4 L5
+				#define L5 L6
+				#define L6 L7
+				#define L7 L8
+				#define L8 L9
+				#define L9 ALICE_KEY
+				permitconnect="*@example.com:22" L0
+				`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Null byte only content
+			{
+				content:  "\x00",
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Null byte in SSH key data
+			{
+				content:  "permitconnect=\"*@example.com:22\" ssh-ed25519 AAAA\x00AAAA comment",
 				expected: map[string][]*AuthorizedKeyOptions{},
 			},
 		}
@@ -1801,6 +2874,18 @@ func TestBastionSSHServer(t *testing.T) {
 									expectedPO := expectedOpts.PermitOpens[j]
 									if po.Host != expectedPO.Host || po.Port != expectedPO.Port {
 										t.Errorf("expected permitopen %v for key, got %v", expectedPO, po)
+										return
+									}
+								}
+							}
+							if len(opts.PermitListens) != len(expectedOpts.PermitListens) {
+								t.Errorf("expected %d permitlistens for key, got %d", len(expectedOpts.PermitListens), len(opts.PermitListens))
+								return
+							} else {
+								for j, pl := range opts.PermitListens {
+									expectedPL := expectedOpts.PermitListens[j]
+									if pl.Host != expectedPL.Host || pl.Port != expectedPL.Port {
+										t.Errorf("expected permitlisten %v for key, got %v", expectedPL, pl)
 										return
 									}
 								}

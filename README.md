@@ -134,21 +134,62 @@ permitconnect="user1@host1:port1,user2@host2:port2",permitopen="host1:port1,host
 - **`no-pty`**: disable pseudo-terminal allocation.
 - **`no-port-forwarding`**: disable both local and remote port forwarding.
 
-#### Macro support
+#### Extensions
 
-Use the `#define` directive for reusable fragments. Macros are simple text substitutions that can be used anywhere in the authorized_keys file.
+The format supports comments, directives, line continuation, and pipe expansion:
+
+- **`#`**: comment (at line start or end of line).
+- **`\`**: joins the next line (must immediately precede the newline).
+- **`|`**: allows multiple keys to share the same options (e.g., `permitconnect="..." KEY1 | KEY2 | KEY3`).
+
+Directives:
+
+- **`#define NAME value`**: defines a macro (`[A-Za-z_][A-Za-z0-9_]*`) that is expanded everywhere, including inside quoted values.
+
+Example:
 
 ```sh
-#define ALICE_PUBKEY ssh-ed25519 AAAAC3NzaC1lZDI1NTE5...
-#define BOB_PUBKEY ssh-ed25519 AAAAC3NzaC1lZDI1NTE5...
+# === Keys ===
+#define ALICE_KEY ssh-ed25519 AAAAC3NzaC1lZDI1NTE5... alice@example.com
+#define BOB_KEY ssh-ed25519 AAAAC3NzaC1lZDI1NTE5... bob@example.com
+#define CAROL_KEY ssh-ed25519 AAAAC3NzaC1lZDI1NTE5... carol@example.com
+#define DAVE_KEY ssh-ed25519 AAAAC3NzaC1lZDI1NTE5... dave@example.com
+#define CI_KEY ssh-ed25519 AAAAC3NzaC1lZDI1NTE5... deploy@ci
 
-#define SERVER_DEV op@dev.example.com,op@10.0.1.1
-permitconnect="SERVER_DEV" ALICE_PUBKEY
-permitconnect="SERVER_DEV" BOB_PUBKEY
+# === Teams ===
+#define SRE_TEAM ALICE_KEY | BOB_KEY
+#define DEV_TEAM CAROL_KEY | DAVE_KEY
+#define ALL_TEAMS SRE_TEAM | DEV_TEAM
 
-#define SERVER_STAGING op@staging.example.com,op@10.0.2.1
-permitconnect="SERVER_STAGING" ALICE_PUBKEY
-permitconnect="SERVER_STAGING" BOB_PUBKEY
+# === Servers ===
+#define DEV_SERVERS *@dev.example.com:22
+#define STAGING_SERVERS *@staging.example.com:22
+#define PROD_SERVERS \
+  # web server
+  *@example.com:22, \
+  # API server
+  *@api.example.com:22
+
+# === Server groups ===
+#define NON_PROD_SERVERS DEV_SERVERS,STAGING_SERVERS
+#define ALL_SERVERS NON_PROD_SERVERS,PROD_SERVERS
+
+# === Option templates ===
+#define SFTP_OPTS command="internal-sftp",no-pty
+
+# === Access rules ===
+
+# SRE: full access to all servers
+permitconnect="ALL_SERVERS",permitopen="*:*" SRE_TEAM
+
+# Developers: non-production environments only
+permitconnect="NON_PROD_SERVERS" DEV_TEAM
+
+# CI/CD: SFTP-only deploy to production
+permitconnect="PROD_SERVERS",SFTP_OPTS CI_KEY
+
+# Git: repository access for everyone
+permitconnect="*@git.example.com:22" ALL_TEAMS | CI_KEY
 ```
 
 ## Client connection
