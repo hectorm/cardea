@@ -8,11 +8,6 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
-type HostCertAuthority struct {
-	Patterns []string
-	Key      ssh.PublicKey
-}
-
 func (srv *Server) newHostKeysCB(path string) (ssh.HostKeyCallback, error) {
 	path = filepath.Clean(path)
 
