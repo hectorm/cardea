@@ -1086,45 +1086,54 @@ func (srv *Server) hostKeyAlgorithms(hostname string) ([]string, error) {
 	if cbErr := hkCb(hostname, remote, key); cbErr != nil {
 		var khErr *knownhosts.KeyError
 		if errors.As(cbErr, &khErr) && len(khErr.Want) > 0 {
-			algos := make([]string, 0, len(khErr.Want)*2)
-			seen := make(map[string]struct{}, len(algos))
+			// Collect cert algorithms first, then base algorithms.
+			// This matches OpenSSH's order_hostkeyalgs behavior which prefers certificate algorithms.
+			certAlgos := make([]string, 0, len(khErr.Want))
+			baseAlgos := make([]string, 0, len(khErr.Want))
+			seen := make(map[string]struct{}, len(khErr.Want)*2)
 			for _, want := range khErr.Want {
 				base := want.Key.Type()
 				if _, ok := seen[base]; !ok {
 					seen[base] = struct{}{}
-					algos = append(algos, base)
+					baseAlgos = append(baseAlgos, base)
 				}
 				switch base {
 				case ssh.KeyAlgoED25519:
 					if _, ok := seen[ssh.CertAlgoED25519v01]; !ok {
 						seen[ssh.CertAlgoED25519v01] = struct{}{}
-						algos = append(algos, ssh.CertAlgoED25519v01)
+						certAlgos = append(certAlgos, ssh.CertAlgoED25519v01)
 					}
 				case ssh.KeyAlgoECDSA256:
 					if _, ok := seen[ssh.CertAlgoECDSA256v01]; !ok {
 						seen[ssh.CertAlgoECDSA256v01] = struct{}{}
-						algos = append(algos, ssh.CertAlgoECDSA256v01)
+						certAlgos = append(certAlgos, ssh.CertAlgoECDSA256v01)
 					}
 				case ssh.KeyAlgoECDSA384:
 					if _, ok := seen[ssh.CertAlgoECDSA384v01]; !ok {
 						seen[ssh.CertAlgoECDSA384v01] = struct{}{}
-						algos = append(algos, ssh.CertAlgoECDSA384v01)
+						certAlgos = append(certAlgos, ssh.CertAlgoECDSA384v01)
 					}
 				case ssh.KeyAlgoECDSA521:
 					if _, ok := seen[ssh.CertAlgoECDSA521v01]; !ok {
 						seen[ssh.CertAlgoECDSA521v01] = struct{}{}
-						algos = append(algos, ssh.CertAlgoECDSA521v01)
+						certAlgos = append(certAlgos, ssh.CertAlgoECDSA521v01)
 					}
 				case ssh.KeyAlgoRSA:
-					for _, algo := range []string{ssh.KeyAlgoRSASHA256, ssh.KeyAlgoRSASHA512, ssh.CertAlgoRSAv01, ssh.CertAlgoRSASHA256v01, ssh.CertAlgoRSASHA512v01} {
+					for _, algo := range []string{ssh.KeyAlgoRSASHA256, ssh.KeyAlgoRSASHA512} {
 						if _, ok := seen[algo]; !ok {
 							seen[algo] = struct{}{}
-							algos = append(algos, algo)
+							baseAlgos = append(baseAlgos, algo)
+						}
+					}
+					for _, algo := range []string{ssh.CertAlgoRSASHA512v01, ssh.CertAlgoRSASHA256v01, ssh.CertAlgoRSAv01} {
+						if _, ok := seen[algo]; !ok {
+							seen[algo] = struct{}{}
+							certAlgos = append(certAlgos, algo)
 						}
 					}
 				}
 			}
-			return algos, nil
+			return append(certAlgos, baseAlgos...), nil
 		}
 	}
 
