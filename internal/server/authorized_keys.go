@@ -258,6 +258,10 @@ type lexer struct {
 func tokenize(input string) []token {
 	l := &lexer{input: input, bol: true}
 	l.run()
+	// Ensure token stream ends with a newline for uniform processing
+	if len(l.tokens) == 0 || l.tokens[len(l.tokens)-1].typ != tokNewline {
+		l.tokens = append(l.tokens, token{typ: tokNewline, value: "\n", line: l.line})
+	}
 	return l.tokens
 }
 
@@ -505,11 +509,6 @@ type preprocessor struct {
 }
 
 func preprocess(content string) preprocessResult {
-	// Ensure content ends with newline for uniform processing
-	if len(content) == 0 || content[len(content)-1] != '\n' {
-		content += "\n"
-	}
-
 	p := &preprocessor{
 		tokens: tokenize(content),
 		macros: make(map[string][]token),
