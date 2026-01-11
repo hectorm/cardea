@@ -67,7 +67,11 @@ func (srv *Server) newAuthorizedKeysDB(path string) (map[string][]*AuthorizedKey
 
 	result := preprocess(string(content))
 	for _, warning := range result.warnings {
-		slog.Warn("preprocessing warning", "message", warning)
+		if warning.context != "" {
+			slog.Warn("authorized_keys file parse", "line", warning.line, "reason", warning.message, "context", warning.context)
+		} else {
+			slog.Warn("authorized_keys file parse", "line", warning.line, "reason", warning.message)
+		}
 	}
 
 lineLoop:
@@ -78,21 +82,21 @@ lineLoop:
 		for _, seg := range line.segments {
 			publicKey, _, segOpts, _, err := ssh.ParseAuthorizedKey([]byte(seg))
 			if err != nil {
-				slog.Warn("skipping line, invalid segment", "line", line.raw, "segment", seg, "error", err)
+				slog.Warn("authorized_keys file parse", "line", line.line, "reason", err, "context", line.raw)
 				continue lineLoop
 			}
 			if keyOpts == nil {
 				if len(segOpts) == 0 {
-					slog.Warn("skipping line, first segment must define options", "line", line.raw)
+					slog.Warn("authorized_keys file parse", "line", line.line, "reason", "missing options", "context", line.raw)
 					continue lineLoop
 				}
 				keyOpts, err = parseAuthorizedKeyOptions(segOpts)
 				if err != nil {
-					slog.Warn("skipping line, invalid options", "line", line.raw, "error", err)
+					slog.Warn("authorized_keys file parse", "line", line.line, "reason", err, "context", line.raw)
 					continue lineLoop
 				}
 			} else if len(segOpts) > 0 {
-				slog.Warn("skipping line, only first segment can define options", "line", line.raw, "segment", seg)
+				slog.Warn("authorized_keys file parse", "line", line.line, "reason", "unexpected options", "context", line.raw)
 				continue lineLoop
 			}
 			keys = append(keys, string(publicKey.Marshal()))
@@ -225,7 +229,8 @@ func parsePermitListen(permitlisten string) (*PermitListen, error) {
 type tokenType int
 
 const (
-	tokWhitespace tokenType = iota
+	tokError tokenType = iota
+	tokWhitespace
 	tokNewline
 	tokOther
 	tokIdent
@@ -239,6 +244,7 @@ const (
 type token struct {
 	typ   tokenType
 	value string
+	line  int
 }
 
 var knownDirectives = []struct {
@@ -251,12 +257,13 @@ var knownDirectives = []struct {
 type lexer struct {
 	input  string
 	pos    int
+	line   int
 	bol    bool
 	tokens []token
 }
 
 func tokenize(input string) []token {
-	l := &lexer{input: input, bol: true}
+	l := &lexer{input: input, line: 1, bol: true}
 	l.run()
 	// Ensure token stream ends with a newline for uniform processing
 	if len(l.tokens) == 0 || l.tokens[len(l.tokens)-1].typ != tokNewline {
@@ -272,7 +279,7 @@ func (l *lexer) run() {
 }
 
 func (l *lexer) emit(typ tokenType, value string) {
-	l.tokens = append(l.tokens, token{typ: typ, value: value})
+	l.tokens = append(l.tokens, token{typ: typ, value: value, line: l.line})
 }
 
 func (l *lexer) peek() byte {
@@ -297,12 +304,14 @@ func (l *lexer) scanToken() {
 		if l.peekAt(1) == '\n' {
 			l.pos += 2
 			l.emit(tokWhitespace, " ")
+			l.line++
 			l.bol = true
 			return
 		}
 		if l.peekAt(1) == '\r' && l.peekAt(2) == '\n' {
 			l.pos += 3
 			l.emit(tokWhitespace, " ")
+			l.line++
 			l.bol = true
 			return
 		}
@@ -316,6 +325,7 @@ func (l *lexer) scanToken() {
 			l.pos++
 		}
 		l.emit(tokNewline, l.input[start:l.pos])
+		l.line++
 		l.bol = true
 		return
 	}
@@ -384,6 +394,7 @@ func (l *lexer) scanBOLComment() {
 		l.pos++
 	}
 	l.emit(tokComment, l.input[start:l.pos])
+	l.line++
 	l.bol = true
 }
 
@@ -454,6 +465,7 @@ func (l *lexer) scanQuoted() bool {
 
 		// Unclosed quote at newline
 		if c == '\n' || c == '\r' {
+			l.emit(tokError, "unterminated quoted string")
 			return true
 		}
 
@@ -471,6 +483,10 @@ func (l *lexer) scanQuoted() bool {
 		l.emit(tokOther, string(c))
 		l.pos++
 	}
+
+	// Reached EOF without closing quote
+	l.emit(tokError, "unterminated quoted string")
+
 	return true
 }
 
@@ -490,22 +506,29 @@ func (l *lexer) matchDirective() (tokenType, int) {
 	return 0, 0
 }
 
-type preprocessResult struct {
-	lines    []preprocessedLine
-	warnings []string
-}
-
-type preprocessedLine struct {
-	segments []string
-	raw      string
-}
-
 type preprocessor struct {
 	tokens      []token
 	pos         int
 	macros      map[string][]token
 	currentLine []token
 	result      preprocessResult
+}
+
+type preprocessResult struct {
+	lines    []preprocessedLine
+	warnings []preprocessWarning
+}
+
+type preprocessedLine struct {
+	segments []string
+	line     int
+	raw      string
+}
+
+type preprocessWarning struct {
+	message string
+	line    int
+	context string
 }
 
 func preprocess(content string) preprocessResult {
@@ -548,14 +571,21 @@ func (p *preprocessor) skipToNewline() {
 	}
 }
 
-func (p *preprocessor) warn(msg string) {
-	p.result.warnings = append(p.result.warnings, msg)
+func (p *preprocessor) warn(message string, line int, context string) {
+	p.result.warnings = append(p.result.warnings, preprocessWarning{
+		message: message,
+		line:    line,
+		context: context,
+	})
 }
 
 func (p *preprocessor) processToken() {
 	tok := p.peek()
 
 	switch tok.typ {
+	case tokError:
+		p.warn(tok.value, tok.line, "")
+		p.advance()
 	case tokComment:
 		p.advance()
 	case tokNewline:
@@ -568,17 +598,18 @@ func (p *preprocessor) processToken() {
 }
 
 func (p *preprocessor) handleNewline() {
-	p.advance()
+	newlineTok := p.advance()
 
 	if raw := p.joinTokens(p.currentLine); raw != "" {
 		expanded, ok := p.expandMacros(p.currentLine)
 		if !ok {
-			p.warn("macro expansion limit reached: " + raw)
+			p.warn("macro expansion limit reached", newlineTok.line, raw)
 		} else if len(p.joinTokens(expanded)) > maxLineLength {
-			p.warn("expanded line exceeds maximum length: " + raw)
+			p.warn("expanded line exceeds maximum length", newlineTok.line, raw)
 		} else if segments := p.splitByPipe(expanded); len(segments) > 0 {
 			p.result.lines = append(p.result.lines, preprocessedLine{
 				segments: segments,
+				line:     newlineTok.line,
 				raw:      raw,
 			})
 		}
@@ -587,10 +618,11 @@ func (p *preprocessor) handleNewline() {
 }
 
 func (p *preprocessor) handleDefine() {
-	p.advance() // skip #define
+	defineTok := p.advance() // skip #define
 	p.skipWhitespace()
 
 	if p.peek().typ != tokIdent {
+		p.warn("expected identifier after #define", defineTok.line, "")
 		p.skipToNewline()
 		return
 	}
@@ -613,7 +645,7 @@ func (p *preprocessor) handleDefine() {
 	}
 
 	if _, exists := p.macros[name]; exists {
-		p.warn("macro redefined: " + name)
+		p.warn("macro redefined", defineTok.line, name)
 	}
 	p.macros[name] = valueTokens
 }
