@@ -160,6 +160,7 @@ func NewServer(cfg *config.Config, opts ...Option) (*Server, error) {
 	srv.recordingsMaxBytes = maxBytes
 
 	srv.sshServerConfig = &ssh.ServerConfig{
+		ServerVersion:     "SSH-2.0-Cardea",
 		PublicKeyCallback: srv.publicKeyCallback,
 		MaxAuthTries:      6,
 	}
