@@ -1030,12 +1030,12 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 	}, nil
 }
 
-func (srv *Server) hostKeyCallback(hostname string, remote net.Addr, key ssh.PublicKey) error {
+func (srv *Server) hostKeyCallback(host string, remote net.Addr, key ssh.PublicKey) error {
 	srv.hostKeysMu.RLock()
 	hkCb := srv.hostKeysCB
 	srv.hostKeysMu.RUnlock()
 
-	if cbErr := hkCb(hostname, remote, key); cbErr != nil {
+	if cbErr := hkCb(host, remote, key); cbErr != nil {
 		var khErr *knownhosts.KeyError
 		if !errors.As(cbErr, &khErr) {
 			return cbErr
@@ -1055,12 +1055,12 @@ func (srv *Server) hostKeyCallback(hostname string, remote net.Addr, key ssh.Pub
 			}
 			defer func() { _ = f.Close() }()
 
-			if _, err = f.Write([]byte(knownhosts.Line([]string{hostname}, key) + "\n")); err != nil {
+			if _, err = f.Write([]byte(knownhosts.Line([]string{host}, key) + "\n")); err != nil {
 				return err
 			}
 
 			slog.Warn("added new host key to known hosts",
-				"hostname", hostname,
+				"host", host,
 				"remote_addr", remote,
 				"fingerprint", ssh.FingerprintSHA256(key),
 				"public_key", srv.marshalAuthorizedKey(key),
@@ -1075,7 +1075,7 @@ func (srv *Server) hostKeyCallback(hostname string, remote net.Addr, key ssh.Pub
 	return nil
 }
 
-func (srv *Server) hostKeyAlgorithms(hostname string) ([]string, error) {
+func (srv *Server) hostKeyAlgorithms(host string) ([]string, error) {
 	srv.hostKeysMu.RLock()
 	hkCb := srv.hostKeysCB
 	srv.hostKeysMu.RUnlock()
@@ -1083,7 +1083,7 @@ func (srv *Server) hostKeyAlgorithms(hostname string) ([]string, error) {
 	remote := &net.TCPAddr{IP: net.IPv4zero, Port: 22}
 	key := srv.signer.PublicKey()
 
-	if cbErr := hkCb(hostname, remote, key); cbErr != nil {
+	if cbErr := hkCb(host, remote, key); cbErr != nil {
 		var khErr *knownhosts.KeyError
 		if errors.As(cbErr, &khErr) && len(khErr.Want) > 0 {
 			// Collect cert algorithms first, then base algorithms.
@@ -1137,7 +1137,7 @@ func (srv *Server) hostKeyAlgorithms(hostname string) ([]string, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("no host key algorithms available for %s", hostname)
+	return nil, fmt.Errorf("no host key algorithms available for %s", host)
 }
 
 func (srv *Server) newFrontendConnection(tcpConn net.Conn) (*ssh.ServerConn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
@@ -1193,7 +1193,7 @@ func (srv *Server) newBackendConnection(permitconnect *PermitConnect) (*ssh.Clie
 	// Populate the client's host key algorithms from known_hosts if available
 	if algos, err := srv.hostKeyAlgorithms(addr); err == nil {
 		sshClientConfig.HostKeyAlgorithms = algos
-		slog.Debug("using host key algorithms from known_hosts", "hostname", addr, "algorithms", algos)
+		slog.Debug("using host key algorithms from known_hosts", "host", addr, "algorithms", algos)
 	}
 
 	sshConn, chans, reqs, err := ssh.NewClientConn(tcpConn, addr, &sshClientConfig)
