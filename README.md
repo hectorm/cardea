@@ -142,11 +142,11 @@ The format supports comments, directives, line continuation, and pipe expansion:
 - **`\`**: joins the next line (must immediately precede the newline).
 - **`|`**: allows multiple keys to share the same options (e.g., `permitconnect="..." KEY1 | KEY2 | KEY3`).
 
-Directives:
+**Directives:**
 
 - **`#define NAME value`**: defines a macro (`[A-Za-z_][A-Za-z0-9_]*`) that is expanded everywhere, including inside quoted values.
 
-Example:
+**Example:**
 
 ```sh
 # === Keys ===
@@ -191,6 +191,44 @@ permitconnect="PROD_SERVERS",SFTP_OPTS CI_KEY
 # Git: repository access for everyone
 permitconnect="*@git.example.com:22" ALL_TEAMS | CI_KEY
 ```
+
+### Known hosts format
+
+Cardea uses the standard OpenSSH known hosts format to verify backend server host keys when connecting from the bastion to backend servers.
+
+```sh
+[host]:port ssh-ed25519 AAAAC3NzaC1lZDI1NTE5...
+```
+
+#### Unknown hosts policy
+
+The `--unknown-hosts-policy` option controls how Cardea handles connections to backend servers whose host key is not present in the known hosts file.
+
+- **`strict` (default):** reject connections to unknown hosts. The connection fails if the backend server's host key is not in the known hosts file or does not match.
+- **`tofu` (trust on first use):** automatically add unknown host keys to the known hosts file on first connection. Subsequent connections are verified against the stored key. When a new host is trusted, a warning is logged with the fingerprint and public key.
+
+> [!NOTE]
+> TOFU is convenient but vulnerable to man-in-the-middle attacks on first connection. Use `strict` mode in production environments where backend host keys can be pre-populated.
+
+#### Certificate authority
+
+Cardea supports `@cert-authority` entries for SSH certificate-based host verification, allowing backend servers to present certificates signed by a trusted CA instead of requiring individual host keys. Host patterns support wildcards (e.g., `*`, `*.internal`, `*:22`).
+
+**Example:**
+
+```sh
+# Trust individual host keys
+[10.0.1.1]:22 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5...
+[10.0.1.2]:22 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5...
+
+# Trust a CA for all backend servers on port 22
+@cert-authority *:22 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5...
+
+# Trust a CA for a specific domain
+@cert-authority *.internal:22 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5...
+```
+
+Using certificate authorities simplifies host key management in environments with many backend servers, as only the CA public key needs to be distributed rather than individual host keys.
 
 ## Client connection
 
