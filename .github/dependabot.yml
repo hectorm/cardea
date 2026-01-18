@@ -25,6 +25,9 @@ updates:
     groups:
       docker-compose-all:
         patterns: ["*"]
+    ignore:
+      - dependency-name: "grafana/grafana"
+        versions: ["9799770991"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
