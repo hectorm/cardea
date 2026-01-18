@@ -16,6 +16,7 @@ import (
 
 type Config struct {
 	Listen                   string
+	HealthListen             string
 	KeyStrategy              string
 	PrivateKeyFile           string
 	PrivateKeyPassphrase     string
@@ -40,10 +41,10 @@ type Config struct {
 }
 
 var (
-	version    = "dev"
-	author     = "H\u00E9ctor Molinero Fern\u00E1ndez <hector@molinero.dev>"
-	license    = "EUPL-v1.2-or-later, https://interoperable-europe.ec.europa.eu/collection/eupl"
-	repository = "https://github.com/hectorm/cardea"
+	Version    = "dev"
+	Author     = "H\u00E9ctor Molinero Fern\u00E1ndez <hector@molinero.dev>"
+	License    = "EUPL-v1.2-or-later, https://interoperable-europe.ec.europa.eu/collection/eupl"
+	Repository = "https://github.com/hectorm/cardea"
 )
 
 func NewConfig() *Config {
@@ -54,7 +55,14 @@ func NewConfig() *Config {
 		&config.Listen,
 		"listen",
 		env.StringEnv(":2222", "CARDEA_LISTEN"),
-		"address to listen on (env CARDEA_LISTEN)",
+		"address for SSH server (env CARDEA_LISTEN)",
+	)
+
+	flag.StringVar(
+		&config.HealthListen,
+		"health-listen",
+		env.StringEnv("localhost:9222", "CARDEA_HEALTH_LISTEN"),
+		"address for health/metrics server; disabled if empty (env CARDEA_HEALTH_LISTEN)",
 	)
 
 	flag.StringVar(
@@ -220,10 +228,10 @@ func NewConfig() *Config {
 
 	if showVersion {
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("Cardea %s\n", version))
-		sb.WriteString(fmt.Sprintf("Author: %s\n", author))
-		sb.WriteString(fmt.Sprintf("License: %s\n", license))
-		sb.WriteString(fmt.Sprintf("Repository: %s\n", repository))
+		fmt.Fprintf(&sb, "Cardea %s\n", Version)
+		fmt.Fprintf(&sb, "Author: %s\n", Author)
+		fmt.Fprintf(&sb, "License: %s\n", License)
+		fmt.Fprintf(&sb, "Repository: %s\n", Repository)
 		fmt.Print(sb.String())
 		os.Exit(0)
 	}

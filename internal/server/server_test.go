@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"math"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -24,6 +25,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/hectorm/cardea/internal/config"
+	"github.com/hectorm/cardea/internal/health"
 	"github.com/hectorm/cardea/internal/server/mock"
 	"github.com/hectorm/cardea/internal/utils/disk"
 )
@@ -78,6 +80,27 @@ func setupBastionServer(t testing.TB, authorizedKeysContent, knownHostsContent s
 	})
 
 	return srv, nil
+}
+
+func setupHealthServer(t testing.TB, bastionSrv *Server) (*health.Server, error) {
+	t.Helper()
+
+	healthSrv := health.NewServer("127.0.0.1:0", func() bool {
+		addr := bastionSrv.Address()
+		return addr != nil && addr.Port > 0
+	}, bastionSrv.Metrics())
+
+	if err := healthSrv.Start(); err != nil {
+		return nil, err
+	}
+
+	t.Cleanup(func() {
+		if err := healthSrv.Stop(); err != nil {
+			t.Errorf("failed to stop health server: %v", err)
+		}
+	})
+
+	return healthSrv, nil
 }
 
 func setupMockServer(t testing.TB, opts ...mock.Option) (*mock.Server, error) {
@@ -182,10 +205,22 @@ func createShellSession(t testing.TB, conn *ssh.Client) (*ssh.Session, io.WriteC
 	return session, stdin, stdout, nil
 }
 
-func waitForInitialPrompt(t testing.TB, stdout io.Reader) error {
+func waitFor(timeout time.Duration, check func() error) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if err := check(); err == nil {
+			return nil
+		} else if time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func waitForInitialPrompt(timeout time.Duration, t testing.TB, stdout io.Reader) error {
 	t.Helper()
 
-	if prompt, err := readUntil(stdout, "mock$", 100); err != nil {
+	if prompt, err := readUntil(timeout, stdout, "mock$", 100); err != nil {
 		return err
 	} else if !strings.Contains(prompt, "mock$") {
 		return fmt.Errorf("expected prompt to contain '%s', got: %q", "mock$", prompt)
@@ -194,7 +229,7 @@ func waitForInitialPrompt(t testing.TB, stdout io.Reader) error {
 	return nil
 }
 
-func waitForSessionClose(t testing.TB, session *ssh.Session, timeout time.Duration) error {
+func waitForSessionClose(timeout time.Duration, t testing.TB, session *ssh.Session) error {
 	t.Helper()
 
 	done := make(chan error, 1)
@@ -222,7 +257,7 @@ func executeShellCommand(t testing.TB, stdin io.WriteCloser, stdout io.Reader, c
 		return "", err
 	}
 
-	response, err := readUntil(stdout, "mock$", 200)
+	response, err := readUntil(2*time.Second, stdout, "mock$", 200)
 	if err != nil {
 		return "", err
 	}
@@ -230,10 +265,10 @@ func executeShellCommand(t testing.TB, stdin io.WriteCloser, stdout io.Reader, c
 	return response, nil
 }
 
-func readUntil(stdout io.Reader, expected string, maxBytes int) (string, error) {
+func readUntil(timeout time.Duration, r io.Reader, expected string, maxBytes int) (string, error) {
 	result := make([]byte, 0, maxBytes)
 	buf := make([]byte, 1)
-	timeout := time.After(2 * time.Second)
+	deadline := time.After(timeout)
 
 	for len(result) < maxBytes {
 		readChan := make(chan struct {
@@ -242,7 +277,7 @@ func readUntil(stdout io.Reader, expected string, maxBytes int) (string, error) 
 		}, 1)
 
 		go func() {
-			n, err := stdout.Read(buf)
+			n, err := r.Read(buf)
 			if n > 0 {
 				readChan <- struct {
 					data byte
@@ -257,7 +292,7 @@ func readUntil(stdout io.Reader, expected string, maxBytes int) (string, error) 
 		}()
 
 		select {
-		case <-timeout:
+		case <-deadline:
 			return string(result), fmt.Errorf("timeout waiting for %q, got: %q", expected, string(result))
 		case readResult := <-readChan:
 			if readResult.err != nil {
@@ -486,14 +521,7 @@ func TestBastionSSHServer(t *testing.T) {
 		}
 
 		for _, test := range tests {
-			listener, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				t.Fatalf("failed to get free port: %v", err)
-			}
-			bindAddr := listener.Addr().String()
-			_ = listener.Close()
-
-			t.Run(fmt.Sprintf("%s->%s", bindAddr, test.pattern), func(t *testing.T) {
+			t.Run(fmt.Sprintf("pattern=%s,ok=%t", test.pattern, test.ok), func(t *testing.T) {
 				bastionSrv, err := setupBastionServer(t,
 					fmt.Sprintf(`permitconnect="alice@%s",permitlisten="%s" %s`, mockAddr, test.pattern, cliAuthorizedKeyStr),
 					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
@@ -517,7 +545,7 @@ func TestBastionSSHServer(t *testing.T) {
 				defer func() { _ = session.Close() }()
 
 				if test.ok {
-					listener, err := bastionConn.Listen("tcp", bindAddr)
+					listener, err := bastionConn.Listen("tcp", "127.0.0.1:0")
 					if err != nil {
 						t.Errorf("expected listen to succeed, but it failed: %v", err)
 						return
@@ -525,6 +553,7 @@ func TestBastionSSHServer(t *testing.T) {
 					defer func() { _ = listener.Close() }()
 
 					go func() {
+						time.Sleep(50 * time.Millisecond)
 						conn, err := net.Dial("tcp", listener.Addr().String())
 						if err != nil {
 							return
@@ -533,21 +562,21 @@ func TestBastionSSHServer(t *testing.T) {
 						_, _ = io.Copy(conn, conn)
 					}()
 
-					conn, err := listener.Accept()
+					acceptedConn, err := listener.Accept()
 					if err != nil {
 						t.Errorf("failed to accept connection: %v", err)
 						return
 					}
-					defer func() { _ = conn.Close() }()
+					defer func() { _ = acceptedConn.Close() }()
 
 					testData := []byte("Hello, World!")
-					if _, err := conn.Write(testData); err != nil {
+					if _, err := acceptedConn.Write(testData); err != nil {
 						t.Errorf("failed to write data: %v", err)
 						return
 					}
 
 					buf := make([]byte, len(testData))
-					if _, err := io.ReadFull(conn, buf); err != nil {
+					if _, err := io.ReadFull(acceptedConn, buf); err != nil {
 						t.Errorf("failed to read data: %v", err)
 						return
 					}
@@ -557,7 +586,7 @@ func TestBastionSSHServer(t *testing.T) {
 						return
 					}
 				} else {
-					if listener, err := bastionConn.Listen("tcp", bindAddr); err == nil {
+					if listener, err := bastionConn.Listen("tcp", "127.0.0.1:0"); err == nil {
 						_ = listener.Close()
 						t.Error("expected listen to fail, but it succeeded")
 						return
@@ -736,25 +765,26 @@ func TestBastionSSHServer(t *testing.T) {
 				}
 			})
 
-			time.Sleep(250 * time.Millisecond)
-
-			files, err := filepath.Glob(filepath.Join(recordingsDir, "*.cast.gz"))
-			if err != nil {
-				t.Errorf("failed to glob for recordings: %v", err)
-				return
-			}
-
-			if len(files) == 1 {
-				if content, err := readGzipFile(files[0]); err != nil {
-					t.Errorf("failed to read recording: %v", err)
-					return
-				} else if !strings.Contains(string(content), "Hello, World!") {
-					t.Errorf("recording does not contain expected output: %q", string(content))
-					return
+			if err := waitFor(2*time.Second, func() error {
+				files, err := filepath.Glob(filepath.Join(recordingsDir, "*.cast.gz"))
+				if err != nil {
+					return fmt.Errorf("failed to glob for recordings: %w", err)
 				}
-			} else {
-				t.Errorf("expected 1 recording, got %d", len(files))
-				return
+				if len(files) != 1 {
+					return fmt.Errorf("expected 1 recording, got %d", len(files))
+				}
+
+				content, err := readGzipFile(files[0])
+				if err != nil {
+					return fmt.Errorf("failed to read recording: %w", err)
+				}
+				if !strings.Contains(string(content), "Hello, World!") {
+					return fmt.Errorf("recording does not contain expected output: %q", string(content))
+				}
+
+				return nil
+			}); err != nil {
+				t.Error(err)
 			}
 		})
 
@@ -796,25 +826,26 @@ func TestBastionSSHServer(t *testing.T) {
 				}
 			})
 
-			time.Sleep(250 * time.Millisecond)
-
-			files, err := filepath.Glob(filepath.Join(recordingsDir, "*.cast.gz"))
-			if err != nil {
-				t.Errorf("failed to glob for recordings: %v", err)
-				return
-			}
-
-			if len(files) == 1 {
-				if content, err := readGzipFile(files[0]); err != nil {
-					t.Errorf("failed to read recording: %v", err)
-					return
-				} else if strings.Contains(string(content), "mock: rsync: NOOP") {
-					t.Errorf("recording does not contain expected output: %q", string(content))
-					return
+			if err := waitFor(2*time.Second, func() error {
+				files, err := filepath.Glob(filepath.Join(recordingsDir, "*.cast.gz"))
+				if err != nil {
+					return fmt.Errorf("failed to glob for recordings: %w", err)
 				}
-			} else {
-				t.Errorf("expected 1 recording, got %d", len(files))
-				return
+				if len(files) != 1 {
+					return fmt.Errorf("expected 1 recording, got %d", len(files))
+				}
+
+				content, err := readGzipFile(files[0])
+				if err != nil {
+					return fmt.Errorf("failed to read recording: %w", err)
+				}
+				if strings.Contains(string(content), "mock: rsync: NOOP") {
+					return fmt.Errorf("recording should not contain rsync output: %q", string(content))
+				}
+
+				return nil
+			}); err != nil {
+				t.Error(err)
 			}
 		})
 
@@ -845,7 +876,7 @@ func TestBastionSSHServer(t *testing.T) {
 				return
 			}
 
-			if err := waitForInitialPrompt(t, stdout); err != nil {
+			if err := waitForInitialPrompt(2*time.Second, t, stdout); err != nil {
 				t.Errorf("failed to wait for initial prompt: %v", err)
 				return
 			}
@@ -870,7 +901,7 @@ func TestBastionSSHServer(t *testing.T) {
 					return
 				}
 
-				if response, err := readUntil(stdout, "mock$", 300); err != nil {
+				if response, err := readUntil(2*time.Second, stdout, "mock$", 300); err != nil {
 					t.Errorf("failed to read cursor movement response: %v", err)
 					return
 				} else if !strings.Contains(response, "hello") {
@@ -924,22 +955,22 @@ func TestBastionSSHServer(t *testing.T) {
 					return
 				}
 
-				time.Sleep(50 * time.Millisecond)
+				if err := waitFor(2*time.Second, func() error {
+					if response, err := executeShellCommand(t, stdin, stdout, "printenv LINES"); err != nil {
+						return fmt.Errorf("failed to execute command: %w", err)
+					} else if !strings.Contains(response, "30") {
+						return fmt.Errorf("expected LINES to be 30 after window change, got response: %q", response)
+					}
 
-				if response, err := executeShellCommand(t, stdin, stdout, "printenv LINES"); err != nil {
-					t.Errorf("failed to execute command: %v", err)
-					return
-				} else if !strings.Contains(response, "30") {
-					t.Errorf("expected LINES to be 30 after window change, got response: %q", response)
-					return
-				}
+					if response, err := executeShellCommand(t, stdin, stdout, "printenv COLUMNS"); err != nil {
+						return fmt.Errorf("failed to execute command: %w", err)
+					} else if !strings.Contains(response, "120") {
+						return fmt.Errorf("expected COLUMNS to be 120 after window change, got response: %q", response)
+					}
 
-				if response, err := executeShellCommand(t, stdin, stdout, "printenv COLUMNS"); err != nil {
-					t.Errorf("failed to execute command: %v", err)
-					return
-				} else if !strings.Contains(response, "120") {
-					t.Errorf("expected COLUMNS to be 120 after window change, got response: %q", response)
-					return
+					return nil
+				}); err != nil {
+					t.Error(err)
 				}
 			})
 
@@ -949,33 +980,34 @@ func TestBastionSSHServer(t *testing.T) {
 					return
 				}
 
-				if err := waitForSessionClose(t, session, 1*time.Second); err != nil {
+				if err := waitForSessionClose(1*time.Second, t, session); err != nil {
 					t.Errorf("session did not close as expected: %v", err)
 					return
 				}
 			})
 
-			time.Sleep(250 * time.Millisecond)
+			if err := waitFor(2*time.Second, func() error {
+				files, err := filepath.Glob(filepath.Join(recordingsDir, "*.cast.gz"))
+				if err != nil {
+					return fmt.Errorf("failed to glob for recordings: %w", err)
+				}
+				if len(files) != 1 {
+					return fmt.Errorf("expected 1 recording, got %d", len(files))
+				}
 
-			files, err := filepath.Glob(filepath.Join(recordingsDir, "*.cast.gz"))
-			if err != nil {
-				t.Errorf("failed to glob for recordings: %v", err)
-				return
-			}
-
-			if len(files) == 1 {
-				if content, err := readGzipFile(files[0]); err != nil {
-					t.Errorf("failed to read recording: %v", err)
-					return
-				} else if !strings.Contains(string(content), "Hello, World!") ||
+				content, err := readGzipFile(files[0])
+				if err != nil {
+					return fmt.Errorf("failed to read recording: %w", err)
+				}
+				if !strings.Contains(string(content), "Hello, World!") ||
 					!strings.Contains(string(content), "hello") ||
 					!strings.Contains(string(content), "logout") {
-					t.Errorf("recording does not contain expected output: %q", string(content))
-					return
+					return fmt.Errorf("recording does not contain expected output: %q", string(content))
 				}
-			} else {
-				t.Errorf("expected 1 recording, got %d", len(files))
-				return
+
+				return nil
+			}); err != nil {
+				t.Error(err)
 			}
 		})
 	})
@@ -1185,12 +1217,14 @@ func TestBastionSSHServer(t *testing.T) {
 		}
 
 		_ = bastionConn.Close()
-		time.Sleep(50 * time.Millisecond)
 
-		_, err = connectToServer(t, cli, bastionSrv)
-		if err != nil {
-			t.Errorf("expected third connection to succeed, but got error: %v", err)
-			return
+		if err := waitFor(2*time.Second, func() error {
+			if _, err := connectToServer(t, cli, bastionSrv); err != nil {
+				return fmt.Errorf("expected third connection to succeed, but got error: %w", err)
+			}
+			return nil
+		}); err != nil {
+			t.Error(err)
 		}
 
 	})
@@ -1237,17 +1271,28 @@ func TestBastionSSHServer(t *testing.T) {
 			}
 		}
 
-		time.Sleep(50 * time.Millisecond)
+		if err := waitFor(2*time.Second, func() error {
+			if bastionSrv.rateLimit.Allow("127.0.0.1") && bastionSrv.rateLimit.Allow("::1") {
+				return fmt.Errorf("rate limiter should block localhost")
+			}
+			return nil
+		}); err != nil {
+			t.Error(err)
+			return
+		}
 
 		if _, err := connectToServer(t, cliGood, bastionSrv); err == nil {
 			t.Error("expected authentication to fail due to rate limit, but it succeeded")
 			return
 		}
 
-		if bastionSrv.rateLimit != nil {
-			bastionSrv.rateLimit.Reset("127.0.0.1")
-			bastionSrv.rateLimit.Reset("::1")
+		if bastionSrv.rateLimit.Allow("127.0.0.1") && bastionSrv.rateLimit.Allow("::1") {
+			t.Error("rate limiter should still block localhost after rejected connection")
+			return
 		}
+
+		bastionSrv.rateLimit.Reset("127.0.0.1")
+		bastionSrv.rateLimit.Reset("::1")
 
 		if _, err := connectToServer(t, cliGood, bastionSrv); err != nil {
 			t.Errorf("expected authentication to succeed after rate limit reset, but got error: %v", err)
@@ -1660,11 +1705,11 @@ func TestBastionSSHServer(t *testing.T) {
 			t.Errorf("failed to setup client: %v", err)
 			return
 		}
-		cli.User = "alice@127.0.0.1:1"
+		cli.User = "alice@127.0.0.1:9"
 		cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
 
 		bastionSrv, err := setupBastionServer(t,
-			fmt.Sprintf(`permitconnect="alice@127.0.0.1:1" %s`, cliAuthorizedKeyStr),
+			fmt.Sprintf(`permitconnect="alice@127.0.0.1:9" %s`, cliAuthorizedKeyStr),
 			"",
 		)
 		if err != nil {
@@ -2154,7 +2199,7 @@ func TestBastionSSHServer(t *testing.T) {
 								{Host: "::1/128", Port: "1-65535"},
 							},
 						},
-						// [T32] Macro redefinition: last definition wins
+						// [T32]
 						{
 							PermitConnects: []PermitConnect{
 								{User: "*", Host: "redef-last.example.com", Port: "22"},
@@ -2165,7 +2210,7 @@ func TestBastionSSHServer(t *testing.T) {
 								{Host: "::1/128", Port: "1-65535"},
 							},
 						},
-						// [T33] Macro redefinition: sequential processing (sees first definition)
+						// [T33]
 						{
 							PermitConnects: []PermitConnect{
 								{User: "*", Host: "seq-first.example.com", Port: "22"},
@@ -2427,7 +2472,7 @@ func TestBastionSSHServer(t *testing.T) {
 								{Host: "::1/128", Port: "1-65535"},
 							},
 						},
-						// [T33] Macro redefinition: sequential processing (sees second definition)
+						// [T33]
 						{
 							PermitConnects: []PermitConnect{
 								{User: "*", Host: "seq-second.example.com", Port: "22"},
@@ -2937,8 +2982,8 @@ func TestBastionSSHServer(t *testing.T) {
 			return
 		}
 
-		ticker := time.NewTicker(50 * time.Millisecond)
-		deadline := time.NewTimer(5 * time.Second)
+		ticker := time.NewTicker(25 * time.Millisecond)
+		deadline := time.NewTimer(10 * time.Second)
 		defer func() { ticker.Stop(); deadline.Stop() }()
 
 		for {
@@ -3411,6 +3456,765 @@ func TestBastionSSHServer(t *testing.T) {
 						return
 					}
 				})
+			})
+		})
+	})
+
+	t.Run("health_server", func(t *testing.T) {
+		cliAuthorized, cliAuthorizedPublicKey, err := setupClient(t)
+		if err != nil {
+			t.Errorf("failed to setup client: %v", err)
+			return
+		}
+		cliAuthorized.User = fmt.Sprintf("alice@%s", mockAddr)
+		cliAuthorizedAuthorizedKeyStr := marshalAuthorizedKey(cliAuthorizedPublicKey)
+
+		cliUnauthorized, _, err := setupClient(t)
+		if err != nil {
+			t.Errorf("failed to setup client: %v", err)
+			return
+		}
+		cliUnauthorized.User = fmt.Sprintf("alice@%s", mockAddr)
+
+		unknownHostMockSrv, err := setupMockServer(t)
+		if err != nil {
+			t.Errorf("failed to setup unknown host mock server: %v", err)
+			return
+		}
+		unknownHostMockAddr := unknownHostMockSrv.Address()
+
+		mismatchMockSrv, err := setupMockServer(t)
+		if err != nil {
+			t.Errorf("failed to setup mismatch mock server: %v", err)
+			return
+		}
+		mismatchMockAddr := mismatchMockSrv.Address()
+
+		denyMockSrv, err := setupMockServer(t, mock.WithPublicKeyCallback(mock.AlwaysDenyPublicKey))
+		if err != nil {
+			t.Errorf("failed to setup deny mock server: %v", err)
+			return
+		}
+		denyMockAddr := denyMockSrv.Address()
+		denyMockAuthorizedKeyStr := marshalAuthorizedKey(denyMockSrv.Signer().PublicKey())
+
+		t.Run("healthz", func(t *testing.T) {
+			bastionSrv, err := setupBastionServer(t,
+				fmt.Sprintf(`permitconnect="alice@*:*" %s`, cliAuthorizedAuthorizedKeyStr),
+				fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+			)
+			if err != nil {
+				t.Errorf("failed to setup bastion server: %v", err)
+				return
+			}
+
+			healthSrv, err := setupHealthServer(t, bastionSrv)
+			if err != nil {
+				t.Errorf("failed to setup health server: %v", err)
+				return
+			}
+			healthURL := fmt.Sprintf("http://%s", healthSrv.Address())
+
+			resp, err := http.Get(healthURL + "/healthz")
+			if err != nil {
+				t.Errorf("failed to request /healthz: %v", err)
+				return
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("expected status 200, got %d", resp.StatusCode)
+				return
+			}
+
+			body, _ := io.ReadAll(resp.Body)
+			if !strings.Contains(string(body), "ok") {
+				t.Errorf("expected body to contain 'ok', got %q", body)
+				return
+			}
+		})
+
+		t.Run("readyz", func(t *testing.T) {
+			bastionSrv, err := setupBastionServer(t,
+				fmt.Sprintf(`permitconnect="alice@*:*" %s`, cliAuthorizedAuthorizedKeyStr),
+				fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+			)
+			if err != nil {
+				t.Errorf("failed to setup bastion server: %v", err)
+				return
+			}
+
+			healthSrv, err := setupHealthServer(t, bastionSrv)
+			if err != nil {
+				t.Errorf("failed to setup health server: %v", err)
+				return
+			}
+			healthURL := fmt.Sprintf("http://%s", healthSrv.Address())
+
+			resp, err := http.Get(healthURL + "/readyz")
+			if err != nil {
+				t.Errorf("failed to request /readyz: %v", err)
+				return
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("expected status 200, got %d", resp.StatusCode)
+				return
+			}
+
+			body, _ := io.ReadAll(resp.Body)
+			if !strings.Contains(string(body), "ok") {
+				t.Errorf("expected body to contain 'ok', got %q", body)
+				return
+			}
+		})
+
+		t.Run("metrics", func(t *testing.T) {
+			t.Run("connections", func(t *testing.T) {
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`permitconnect="alice@*:*" %s`, cliAuthorizedAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+				metrics := bastionSrv.Metrics()
+
+				// Create 5 connections, then close
+				for range 5 {
+					bastionConn, err := connectToServer(t, cliAuthorized, bastionSrv)
+					if err != nil {
+						t.Errorf("failed to connect to server: %v", err)
+						return
+					}
+					_ = bastionConn.Close()
+				}
+
+				// Create 3 connections, keep open
+				for range 3 {
+					_, err := connectToServer(t, cliAuthorized, bastionSrv)
+					if err != nil {
+						t.Errorf("failed to connect to server: %v", err)
+						return
+					}
+				}
+
+				if err := waitFor(2*time.Second, func() error {
+					if count := metrics.ConnectionsActive.Load(); count != 3 {
+						return fmt.Errorf("expected cardea_connections_active 3, got %d", count)
+					}
+					if count := metrics.ConnectionsTotal.Load(); count != 8 {
+						return fmt.Errorf("expected cardea_connections_total 8, got %d", count)
+					}
+					return nil
+				}); err != nil {
+					t.Error(err)
+				}
+			})
+
+			t.Run("sessions", func(t *testing.T) {
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`permitconnect="alice@*:*" %s`, cliAuthorizedAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+				metrics := bastionSrv.Metrics()
+
+				// Create 5 sessions, then close
+				for range 5 {
+					bastionConn, err := connectToServer(t, cliAuthorized, bastionSrv)
+					if err != nil {
+						t.Errorf("failed to connect to server: %v", err)
+						return
+					}
+
+					session, err := bastionConn.NewSession()
+					if err != nil {
+						t.Errorf("failed to create session: %v", err)
+						return
+					}
+					_ = session.Close()
+					_ = bastionConn.Close()
+				}
+
+				// Create 3 sessions, keep open
+				for range 3 {
+					bastionConn, err := connectToServer(t, cliAuthorized, bastionSrv)
+					if err != nil {
+						t.Errorf("failed to connect to server: %v", err)
+						return
+					}
+
+					session, err := bastionConn.NewSession()
+					if err != nil {
+						t.Errorf("failed to create session: %v", err)
+						return
+					}
+					defer func() { _ = session.Close() }()
+				}
+
+				if err := waitFor(2*time.Second, func() error {
+					if count := metrics.SessionsActive.Load(); count != 3 {
+						return fmt.Errorf("expected cardea_sessions_active 3, got %d", count)
+					}
+					if count := metrics.SessionsTotal.Load(); count != 8 {
+						return fmt.Errorf("expected cardea_sessions_total 8, got %d", count)
+					}
+					return nil
+				}); err != nil {
+					t.Error(err)
+				}
+			})
+
+			t.Run("port_forwards", func(t *testing.T) {
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`permitconnect="alice@*:*",permitopen="*:*",permitlisten="*:*" %s`, cliAuthorizedAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+				metrics := bastionSrv.Metrics()
+
+				// Create 5 local port forwards: 3 closed, 2 kept open
+				for i := range 5 {
+					bastionConn, err := connectToServer(t, cliAuthorized, bastionSrv)
+					if err != nil {
+						t.Errorf("failed to connect to server: %v", err)
+						return
+					}
+
+					dialConn, err := bastionConn.Dial("tcp", mockAddr.String())
+					if err != nil {
+						t.Errorf("failed to open local port forward: %v", err)
+						return
+					}
+
+					if i < 3 {
+						_ = dialConn.Close()
+						_ = bastionConn.Close()
+					} else {
+						defer func() { _ = dialConn.Close() }()
+					}
+				}
+
+				// Create 3 remote port forwards with sessions: 2 closed, 1 kept open
+				for i := range 3 {
+					bastionConn, err := connectToServer(t, cliAuthorized, bastionSrv)
+					if err != nil {
+						t.Errorf("failed to connect to server: %v", err)
+						return
+					}
+
+					session, err := bastionConn.NewSession()
+					if err != nil {
+						t.Errorf("failed to create session: %v", err)
+						return
+					}
+
+					listener, err := bastionConn.Listen("tcp", "127.0.0.1:0")
+					if err != nil {
+						_ = session.Close()
+						t.Errorf("failed to request remote port forward: %v", err)
+						return
+					}
+
+					go func() {
+						time.Sleep(50 * time.Millisecond)
+						conn, err := net.Dial("tcp", listener.Addr().String())
+						if err != nil {
+							return
+						}
+						defer func() { _ = conn.Close() }()
+						_, _ = io.Copy(conn, conn)
+					}()
+
+					acceptedConn, err := listener.Accept()
+					if err != nil {
+						_ = listener.Close()
+						_ = session.Close()
+						t.Errorf("failed to accept connection: %v", err)
+						return
+					}
+
+					_, _ = acceptedConn.Write([]byte{0})
+					_, _ = acceptedConn.Read(make([]byte, 1))
+
+					if i < 2 {
+						_ = acceptedConn.Close()
+						_ = listener.Close()
+						_ = session.Close()
+						_ = bastionConn.Close()
+					} else {
+						defer func() {
+							_ = acceptedConn.Close()
+							_ = listener.Close()
+							_ = session.Close()
+						}()
+					}
+				}
+
+				if err := waitFor(2*time.Second, func() error {
+					if count := metrics.PortForwardsLocalActive.Load(); count != 2 {
+						return fmt.Errorf("expected cardea_port_forwards_local_active 2, got %d", count)
+					}
+					if count := metrics.PortForwardsLocalTotal.Load(); count != 5 {
+						return fmt.Errorf("expected cardea_port_forwards_local_total 5, got %d", count)
+					}
+					if count := metrics.PortForwardsRemoteActive.Load(); count != 1 {
+						return fmt.Errorf("expected cardea_port_forwards_remote_active 1, got %d", count)
+					}
+					if count := metrics.PortForwardsRemoteTotal.Load(); count != 3 {
+						return fmt.Errorf("expected cardea_port_forwards_remote_total 3, got %d", count)
+					}
+					return nil
+				}); err != nil {
+					t.Error(err)
+				}
+			})
+
+			t.Run("transferred_bytes", func(t *testing.T) {
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`permitconnect="alice@*:*" %s`, cliAuthorizedAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+				metrics := bastionSrv.Metrics()
+
+				bastionConn, err := connectToServer(t, cliAuthorized, bastionSrv)
+				if err != nil {
+					t.Errorf("failed to connect to server: %v", err)
+					return
+				}
+
+				session, err := bastionConn.NewSession()
+				if err != nil {
+					t.Errorf("failed to create session: %v", err)
+					return
+				}
+				defer func() { _ = session.Close() }()
+
+				if output, err := session.Output("echo Hello, World!"); err != nil {
+					t.Errorf("failed to execute command: %v", err)
+					return
+				} else if expectedOutput := "Hello, World!\r\n"; string(output) != expectedOutput {
+					t.Errorf("unexpected output: got %q, want %q", string(output), expectedOutput)
+					return
+				}
+
+				if err := waitFor(2*time.Second, func() error {
+					if count := metrics.ReceivedBytesTotal.Load(); count == 0 {
+						return fmt.Errorf("expected cardea_received_bytes_total > 0, got %d", count)
+					}
+					if count := metrics.SentBytesTotal.Load(); count == 0 {
+						return fmt.Errorf("expected cardea_sent_bytes_total > 0, got %d", count)
+					}
+					return nil
+				}); err != nil {
+					t.Error(err)
+				}
+			})
+
+			t.Run("auth_successes", func(t *testing.T) {
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`permitconnect="alice@*:*" %s`, cliAuthorizedAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+				metrics := bastionSrv.Metrics()
+
+				for range 5 {
+					bastionConn, err := connectToServer(t, cliAuthorized, bastionSrv)
+					if err != nil {
+						t.Errorf("failed to connect to server: %v", err)
+						return
+					}
+					_ = bastionConn.Close()
+				}
+
+				if err := waitFor(2*time.Second, func() error {
+					if count := metrics.AuthSuccessesTotal.Load(); count != 5 {
+						return fmt.Errorf("expected cardea_auth_successes_total 5, got %d", count)
+					}
+					return nil
+				}); err != nil {
+					t.Error(err)
+				}
+			})
+
+			t.Run("auth_failures_unknown_key", func(t *testing.T) {
+				rateLimitMax := 7
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`permitconnect="alice@*:*" %s`, cliAuthorizedAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+					func(srv *Server) error {
+						srv.config.RateLimitMax = rateLimitMax
+						srv.config.RateLimitTime = 1 * time.Hour
+						return nil
+					},
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+				metrics := bastionSrv.Metrics()
+
+				for range rateLimitMax {
+					if _, err := connectToServer(t, cliUnauthorized, bastionSrv); err == nil {
+						t.Error("expected authentication to fail, but it succeeded")
+						return
+					}
+				}
+
+				if err := waitFor(2*time.Second, func() error {
+					// #nosec G115
+					if count := metrics.AuthFailuresUnknownKeyTotal.Load(); int(count) != rateLimitMax {
+						return fmt.Errorf("expected cardea_auth_failures_total{reason=\"unknown_key\"} %d, got %d", rateLimitMax, count)
+					}
+					return nil
+				}); err != nil {
+					t.Error(err)
+				}
+			})
+
+			t.Run("auth_failures_denied_backend", func(t *testing.T) {
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`permitconnect="alice@*:*" %s`, cliAuthorizedAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+				metrics := bastionSrv.Metrics()
+
+				cliUnauthorizedTarget := *cliAuthorized
+				cliUnauthorizedTarget.User = fmt.Sprintf("bob@%s", mockAddr)
+				for range 3 {
+					if bastionConn, err := connectToServer(t, &cliUnauthorizedTarget, bastionSrv); err == nil {
+						_ = bastionConn.Close()
+						t.Error("expected authentication to fail, but it succeeded")
+						return
+					}
+				}
+
+				if err := waitFor(2*time.Second, func() error {
+					if count := metrics.AuthFailuresDeniedBackendTotal.Load(); count != 3 {
+						return fmt.Errorf("expected cardea_auth_failures_total{reason=\"denied_backend\"} 3, got %d", count)
+					}
+					return nil
+				}); err != nil {
+					t.Error(err)
+				}
+			})
+
+			t.Run("auth_failures_invalid_backend", func(t *testing.T) {
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`permitconnect="alice@*:*" %s`, cliAuthorizedAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+				metrics := bastionSrv.Metrics()
+
+				cliInvalidFormat := *cliAuthorized
+				cliInvalidFormat.User = "invalidformat"
+				for range 3 {
+					if bastionConn, err := connectToServer(t, &cliInvalidFormat, bastionSrv); err == nil {
+						_ = bastionConn.Close()
+						t.Error("expected authentication to fail, but it succeeded")
+						return
+					}
+				}
+
+				if err := waitFor(2*time.Second, func() error {
+					if count := metrics.AuthFailuresInvalidBackendTotal.Load(); count != 3 {
+						return fmt.Errorf("expected cardea_auth_failures_total{reason=\"invalid_backend\"} 3, got %d", count)
+					}
+					return nil
+				}); err != nil {
+					t.Error(err)
+				}
+			})
+
+			t.Run("rate_limit_rejections", func(t *testing.T) {
+				rateLimitMax := 7
+				rateLimitTime := 1 * time.Hour
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`permitconnect="alice@*:*" %s`, cliAuthorizedAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+					func(srv *Server) error {
+						srv.config.RateLimitMax = rateLimitMax
+						srv.config.RateLimitTime = rateLimitTime
+						return nil
+					},
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+				metrics := bastionSrv.Metrics()
+
+				for range rateLimitMax {
+					if _, err := connectToServer(t, cliUnauthorized, bastionSrv); err == nil {
+						t.Error("expected authentication to fail, but it succeeded")
+						return
+					}
+				}
+
+				if err := waitFor(2*time.Second, func() error {
+					if bastionSrv.rateLimit.Allow("127.0.0.1") && bastionSrv.rateLimit.Allow("::1") {
+						return fmt.Errorf("rate limiter should block localhost")
+					}
+					return nil
+				}); err != nil {
+					t.Error(err)
+					return
+				}
+
+				for range 5 {
+					if _, err := connectToServer(t, cliUnauthorized, bastionSrv); err == nil {
+						t.Error("expected authentication to fail, but it succeeded")
+						return
+					}
+				}
+
+				if err := waitFor(2*time.Second, func() error {
+					// #nosec G115
+					if count := metrics.RateLimitRejectionsTotal.Load(); int(count) != 5 {
+						return fmt.Errorf("expected cardea_rate_limit_rejections_total 5, got %d", count)
+					}
+					return nil
+				}); err != nil {
+					t.Error(err)
+				}
+			})
+
+			t.Run("backend_errors_refused", func(t *testing.T) {
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`permitconnect="alice@*:*" %s`, cliAuthorizedAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+				metrics := bastionSrv.Metrics()
+
+				cliBadBackend := *cliAuthorized
+				cliBadBackend.User = "alice@127.0.0.1:9"
+				for range 5 {
+					if bastionConn, err := connectToServer(t, &cliBadBackend, bastionSrv); err == nil {
+						_ = bastionConn.Close()
+					}
+				}
+
+				if err := waitFor(2*time.Second, func() error {
+					if count := metrics.BackendErrorsRefusedTotal.Load(); count != 5 {
+						return fmt.Errorf("expected cardea_backend_errors_total{reason=\"refused\"} 5, got %d", count)
+					}
+					return nil
+				}); err != nil {
+					t.Error(err)
+				}
+			})
+
+			t.Run("backend_errors_failed_auth", func(t *testing.T) {
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`permitconnect="alice@*:*" %s`, cliAuthorizedAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", denyMockAddr, denyMockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+				metrics := bastionSrv.Metrics()
+
+				cliDenyHost := *cliAuthorized
+				cliDenyHost.User = fmt.Sprintf("alice@%s", denyMockAddr)
+				for range 3 {
+					if bastionConn, err := connectToServer(t, &cliDenyHost, bastionSrv); err == nil {
+						_ = bastionConn.Close()
+					}
+				}
+
+				if err := waitFor(2*time.Second, func() error {
+					if count := metrics.BackendErrorsFailedAuthTotal.Load(); count != 3 {
+						return fmt.Errorf("expected cardea_backend_errors_total{reason=\"failed_auth\"} 3, got %d", count)
+					}
+					return nil
+				}); err != nil {
+					t.Error(err)
+				}
+			})
+
+			t.Run("backend_errors_unknown_host", func(t *testing.T) {
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`permitconnect="alice@*:*" %s`, cliAuthorizedAuthorizedKeyStr),
+					"",
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+				metrics := bastionSrv.Metrics()
+
+				cliUnknownHost := *cliAuthorized
+				cliUnknownHost.User = fmt.Sprintf("alice@%s", unknownHostMockAddr)
+				for range 3 {
+					if bastionConn, err := connectToServer(t, &cliUnknownHost, bastionSrv); err == nil {
+						_ = bastionConn.Close()
+					}
+				}
+
+				if err := waitFor(2*time.Second, func() error {
+					if count := metrics.BackendErrorsUnknownHostTotal.Load(); count != 3 {
+						return fmt.Errorf("expected cardea_backend_errors_total{reason=\"unknown_host\"} 3, got %d", count)
+					}
+					return nil
+				}); err != nil {
+					t.Error(err)
+				}
+			})
+
+			t.Run("backend_errors_mismatched_hostkey", func(t *testing.T) {
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`permitconnect="alice@*:*" %s`, cliAuthorizedAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mismatchMockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+				metrics := bastionSrv.Metrics()
+
+				cliMismatchHost := *cliAuthorized
+				cliMismatchHost.User = fmt.Sprintf("alice@%s", mismatchMockAddr)
+				for range 2 {
+					if bastionConn, err := connectToServer(t, &cliMismatchHost, bastionSrv); err == nil {
+						_ = bastionConn.Close()
+					}
+				}
+
+				if err := waitFor(2*time.Second, func() error {
+					if count := metrics.BackendErrorsMismatchedHostkeyTotal.Load(); count != 2 {
+						return fmt.Errorf("expected cardea_backend_errors_total{reason=\"mismatched_hostkey\"} 2, got %d", count)
+					}
+					return nil
+				}); err != nil {
+					t.Error(err)
+				}
+			})
+
+			t.Run("output_format", func(t *testing.T) {
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`permitconnect="alice@*:*" %s`, cliAuthorizedAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+
+				healthSrv, err := setupHealthServer(t, bastionSrv)
+				if err != nil {
+					t.Errorf("failed to setup health server: %v", err)
+					return
+				}
+				healthURL := fmt.Sprintf("http://%s", healthSrv.Address())
+
+				req, err := http.NewRequest("GET", healthURL+"/metrics", nil)
+				if err != nil {
+					t.Errorf("failed to create request: %v", err)
+					return
+				}
+				req.Header.Set("Accept", "application/openmetrics-text; version=1.0.0")
+
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					t.Errorf("failed to request /metrics: %v", err)
+					return
+				}
+				defer func() { _ = resp.Body.Close() }()
+
+				if resp.StatusCode != http.StatusOK {
+					t.Errorf("expected status 200, got %d", resp.StatusCode)
+					return
+				}
+				if val := resp.Header.Get("Content-Type"); !strings.Contains(val, "application/openmetrics-text") {
+					t.Errorf("expected Content-Type application/openmetrics-text, got %q", val)
+					return
+				}
+
+				body, _ := io.ReadAll(resp.Body)
+				metrics := []string{
+					"go_info",
+					"go_goroutines",
+					"go_threads",
+					"go_sched_gomaxprocs_threads",
+					"go_gc_cycles_automatic_gc_cycles_total",
+					"go_gc_cycles_forced_gc_cycles_total",
+					"go_gc_cycles_total_gc_cycles_total",
+					"go_gc_gogc_percent",
+					"go_gc_gomemlimit_bytes",
+					"go_gc_heap_live_bytes",
+					"go_gc_heap_tiny_allocs_objects_total",
+					"go_gc_limiter_last_enabled_gc_cycle",
+					"go_gc_scan_globals_bytes",
+					"go_gc_scan_heap_bytes",
+					"go_gc_scan_stack_bytes",
+					"go_gc_scan_total_bytes",
+					"go_gc_stack_starting_size_bytes",
+					"go_sync_mutex_wait_total_seconds_total",
+					"cardea_build_info",
+					"cardea_start_time_seconds",
+					"cardea_connections_active",
+					"cardea_connections_total",
+					"cardea_sessions_active",
+					"cardea_sessions_total",
+					"cardea_port_forwards_local_active",
+					"cardea_port_forwards_local_total",
+					"cardea_port_forwards_remote_active",
+					"cardea_port_forwards_remote_total",
+					"cardea_received_bytes_total",
+					"cardea_sent_bytes_total",
+					"cardea_auth_successes_total",
+					"cardea_auth_failures_total{reason=\"unknown_key\"}",
+					"cardea_auth_failures_total{reason=\"denied_backend\"}",
+					"cardea_auth_failures_total{reason=\"invalid_backend\"}",
+					"cardea_rate_limit_rejections_total",
+					"cardea_backend_errors_total{reason=\"timeout\"}",
+					"cardea_backend_errors_total{reason=\"refused\"}",
+					"cardea_backend_errors_total{reason=\"failed_auth\"}",
+					"cardea_backend_errors_total{reason=\"unknown_host\"}",
+					"cardea_backend_errors_total{reason=\"mismatched_hostkey\"}",
+					"cardea_backend_errors_total{reason=\"other\"}",
+				}
+				for _, metric := range metrics {
+					if !strings.Contains(string(body), metric) {
+						t.Errorf("expected metric %s to exist, got:\n%s", metric, body)
+						return
+					}
+				}
+
+				if !strings.Contains(string(body), "# EOF") {
+					t.Errorf("expected # EOF marker, got:\n%s", body)
+					return
+				}
 			})
 		})
 	})

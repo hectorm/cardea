@@ -6,15 +6,18 @@ services:
     image: "cardea"
     pull_policy: "build"
     build: { context: "./" }
+    deploy:
+      mode: "replicated"
+      replicas: "${CARDEA_REPLICAS:-1}"
     restart: "always"
-    container_name: "cardea"
     hostname: "cardea"
     read_only: true
     user: "${CARDEA_UID:-1000}:${CARDEA_GID:-1000}"
     networks:
       - "cardea"
     ports:
-      - "2222:2222/tcp"
+      - "${CARDEA_SSH_PORT_RANGE:-2222-2222}:2222/tcp"
+      - "127.0.0.1:${CARDEA_HTTP_PORT_RANGE:-9222-9222}:9222/tcp"
     volumes:
       - { type: "bind", source: "./data/", target: "/data/" }
       - { type: "tmpfs", target: "/run/" }
@@ -30,6 +33,269 @@ services:
       CARDEA_UNKNOWN_HOSTS_POLICY: "${CARDEA_UNKNOWN_HOSTS_POLICY:-tofu}"
       CARDEA_LOG_LEVEL: "${CARDEA_LOG_LEVEL:-debug}"
 
+  prometheus:
+    image: "docker.io/prom/prometheus:v3.9.1"
+    profiles: ["metrics"]
+    restart: "always"
+    hostname: "prometheus"
+    networks:
+      - "cardea"
+    ports:
+      - "127.0.0.1:9090:9090/tcp"
+    volumes:
+      - { type: "volume", source: "prometheus-data", target: "/prometheus/" }
+      - { type: "tmpfs", target: "/run/" }
+      - { type: "tmpfs", target: "/tmp/", tmpfs: { mode: 0o1777 } }
+    configs:
+      - { source: "prometheus-config", target: "/etc/prometheus/prometheus.yml" }
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus/"
+
+  grafana:
+    image: "docker.io/grafana/grafana:12.4.0-20977568970"
+    profiles: ["metrics"]
+    restart: "always"
+    hostname: "grafana"
+    networks:
+      - "cardea"
+    ports:
+      - "127.0.0.1:3000:3000/tcp"
+    configs:
+      - { source: "grafana-datasources", target: "/etc/grafana/provisioning/datasources/datasources.yaml" }
+      - { source: "grafana-dashboards", target: "/etc/grafana/provisioning/dashboards/dashboards.yaml" }
+      - { source: "grafana-cardea-dashboard", target: "/var/lib/grafana/dashboards/cardea.json" }
+    environment:
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: "/var/lib/grafana/dashboards/cardea.json"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_ALLOW_ORG_CREATE: "false"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_EXPLORE_ENABLED: "false"
+      GF_PROFILE_ENABLED: "false"
+      GF_SNAPSHOTS_ENABLED: "false"
+      GF_UNIFIED_ALERTING_ENABLED: "false"
+      GF_HELP_ENABLED: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_ANALYTICS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_ANALYTICS_FEEDBACK_LINKS_ENABLED: "false"
+      GF_PLUGINS_PLUGIN_ADMIN_ENABLED: "false"
+      GF_PLUGINS_PUBLIC_KEY_RETRIEVAL_DISABLED: "true"
+      GF_PLUGINS_PUBLIC_KEY_RETRIEVAL_ON_STARTUP: "false"
+      GF_PLUGINS_PREINSTALL: ""
+      GF_PLUGINS_DISABLE_PLUGINS: >-
+        grafana-exploretraces-app,
+        grafana-lokiexplore-app,
+        grafana-metricsdrilldown-app,
+        grafana-pyroscope-app
+
+configs:
+  prometheus-config:
+    content: |
+      global:
+        scrape_interval: "5s"
+      scrape_configs:
+        - job_name: "cardea"
+          dns_sd_configs:
+            - names: ["cardea"]
+              type: "A"
+              port: 9222
+          metrics_path: "/metrics"
+          scheme: "http"
+
+  grafana-datasources:
+    content: |
+      apiVersion: 1
+      datasources:
+        - uid: "prometheus"
+          name: "prometheus"
+          type: "prometheus"
+          access: "proxy"
+          url: "http://prometheus:9090"
+          isDefault: true
+          editable: false
+          jsonData:
+            timeInterval: "5s"
+            queryTimeout: "5s"
+
+  grafana-dashboards:
+    content: |
+      apiVersion: 1
+      providers:
+        - name: "dashboards"
+          type: "file"
+          disableDeletion: true
+          allowUiUpdates: false
+          updateIntervalSeconds: 3600
+          options:
+            path: "/var/lib/grafana/dashboards/"
+            foldersFromFilesStructure: false
+
+  grafana-cardea-dashboard:
+    content: |
+      {
+        "uid": "cardea", "title": "Cardea", "schemaVersion": 39, "editable": false, "refresh": "5s",
+        "templating": {
+          "list": [{
+            "name": "instance",
+            "label": "Instance",
+            "type": "query",
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "query": "label_values(go_info, instance)",
+            "refresh": 2,
+            "multi": true,
+            "includeAll": true,
+            "allValue": ".+"
+          }]
+        },
+        "panels": [
+          {
+            "title": "Active connections", "type": "stat",
+            "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "targets": [{ "expr": "sum(cardea_connections_active{instance=~\"$$instance\"})", "refId": "A" }]
+          },
+          {
+            "title": "Active sessions", "type": "stat",
+            "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "targets": [{ "expr": "sum(cardea_sessions_active{instance=~\"$$instance\"})", "refId": "A" }]
+          },
+          {
+            "title": "Active local port forwards", "type": "stat",
+            "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "targets": [{ "expr": "sum(cardea_port_forwards_local_active{instance=~\"$$instance\"})", "refId": "A" }]
+          },
+          {
+            "title": "Active remote port forwards", "type": "stat",
+            "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "targets": [{ "expr": "sum(cardea_port_forwards_remote_active{instance=~\"$$instance\"})", "refId": "A" }]
+          },
+          {
+            "title": "Connections and sessions", "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "targets": [
+              { "expr": "cardea_connections_active{instance=~\"$$instance\"}", "legendFormat": "Active connections ({{instance}})", "refId": "A" },
+              { "expr": "cardea_sessions_active{instance=~\"$$instance\"}", "legendFormat": "Active sessions ({{instance}})", "refId": "B" },
+              { "expr": "rate(cardea_connections_total{instance=~\"$$instance\"}[1m])", "legendFormat": "Connections/s ({{instance}})", "refId": "C" },
+              { "expr": "rate(cardea_sessions_total{instance=~\"$$instance\"}[1m])", "legendFormat": "Sessions/s ({{instance}})", "refId": "D" }
+            ]
+          },
+          {
+            "title": "Network traffic", "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "Bps" } },
+            "targets": [
+              { "expr": "rate(cardea_received_bytes_total{instance=~\"$$instance\"}[1m])", "legendFormat": "Received ({{instance}})", "refId": "A" },
+              { "expr": "rate(cardea_sent_bytes_total{instance=~\"$$instance\"}[1m])", "legendFormat": "Sent ({{instance}})", "refId": "B" }
+            ]
+          },
+          {
+            "title": "Authentication", "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "targets": [
+              { "expr": "sum by (instance) (rate(cardea_auth_successes_total{instance=~\"$$instance\"}[1m]))", "legendFormat": "Successes/s ({{instance}})", "refId": "A" },
+              { "expr": "sum by (instance, reason) (rate(cardea_auth_failures_total{instance=~\"$$instance\"}[1m]))", "legendFormat": "Failures/s {{reason}} ({{instance}})", "refId": "B" }
+            ]
+          },
+          {
+            "title": "Backend errors", "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "targets": [
+              { "expr": "sum by (instance, reason) (rate(cardea_backend_errors_total{instance=~\"$$instance\"}[1m]))", "legendFormat": "{{reason}}/s ({{instance}})", "refId": "A" }
+            ]
+          },
+          {
+            "title": "Port forwards", "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "targets": [
+              { "expr": "cardea_port_forwards_local_active{instance=~\"$$instance\"}", "legendFormat": "Local active ({{instance}})", "refId": "A" },
+              { "expr": "cardea_port_forwards_remote_active{instance=~\"$$instance\"}", "legendFormat": "Remote active ({{instance}})", "refId": "B" },
+              { "expr": "rate(cardea_port_forwards_local_total{instance=~\"$$instance\"}[1m])", "legendFormat": "Local/s ({{instance}})", "refId": "C" },
+              { "expr": "rate(cardea_port_forwards_remote_total{instance=~\"$$instance\"}[1m])", "legendFormat": "Remote/s ({{instance}})", "refId": "D" }
+            ]
+          },
+          {
+            "title": "Rate limiting", "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "targets": [
+              { "expr": "rate(cardea_rate_limit_rejections_total{instance=~\"$$instance\"}[1m])", "legendFormat": "Rejections/s ({{instance}})", "refId": "A" }
+            ]
+          },
+          {
+            "title": "Go concurrency",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 8, "x": 0, "y": 28 },
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "targets": [
+              { "expr": "go_goroutines{instance=~\"$$instance\"}", "legendFormat": "Goroutines ({{instance}})", "refId": "A" },
+              { "expr": "go_threads{instance=~\"$$instance\"}", "legendFormat": "Threads ({{instance}})", "refId": "B" },
+              { "expr": "go_sched_gomaxprocs_threads{instance=~\"$$instance\"}", "legendFormat": "GOMAXPROCS ({{instance}})", "refId": "C" }
+            ]
+          },
+          {
+            "title": "Go GC activity",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 8, "x": 8, "y": 28 },
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "targets": [
+              { "expr": "rate(go_gc_cycles_total_gc_cycles_total{instance=~\"$$instance\"}[1m])", "legendFormat": "Total GC cycles/s ({{instance}})", "refId": "A" },
+              { "expr": "rate(go_gc_cycles_automatic_gc_cycles_total{instance=~\"$$instance\"}[1m])", "legendFormat": "Auto GC cycles/s ({{instance}})", "refId": "B" },
+              { "expr": "rate(go_gc_cycles_forced_gc_cycles_total{instance=~\"$$instance\"}[1m])", "legendFormat": "Forced GC cycles/s ({{instance}})", "refId": "C" }
+            ]
+          },
+          {
+            "title": "Go contention",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 8, "x": 16, "y": 28 },
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "s" } },
+            "targets": [
+              { "expr": "rate(go_sync_mutex_wait_total_seconds_total{instance=~\"$$instance\"}[1m])", "legendFormat": "Mutex wait/s ({{instance}})", "refId": "A" }
+            ]
+          },
+          {
+            "title": "Go memory usage",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "bytes" } },
+            "targets": [
+              { "expr": "go_gc_heap_live_bytes{instance=~\"$$instance\"}", "legendFormat": "Heap live ({{instance}})", "refId": "A" },
+              { "expr": "go_gc_scan_heap_bytes{instance=~\"$$instance\"}", "legendFormat": "Scan heap ({{instance}})", "refId": "B" },
+              { "expr": "go_gc_scan_stack_bytes{instance=~\"$$instance\"}", "legendFormat": "Scan stack ({{instance}})", "refId": "C" },
+              { "expr": "go_gc_scan_total_bytes{instance=~\"$$instance\"}", "legendFormat": "Scan total ({{instance}})", "refId": "D" },
+              { "expr": "go_gc_gomemlimit_bytes{instance=~\"$$instance\"} < 9223372036854775807", "legendFormat": "Memory limit ({{instance}})", "refId": "E" }
+            ]
+          },
+          {
+            "title": "Go memory activity",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "targets": [
+              { "expr": "rate(go_gc_heap_tiny_allocs_objects_total{instance=~\"$$instance\"}[1m])", "legendFormat": "Tiny allocs/s ({{instance}})", "refId": "A" }
+            ]
+          }
+        ]
+      }
+
+volumes:
+  prometheus-data:
+
 networks:
   cardea:
-    name: "cardea"

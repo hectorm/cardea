@@ -29,7 +29,7 @@ GOVARIANT := $(GO386)$(GOAMD64)$(GOARM)$(GOMIPS)$(GOMIPS64)$(GOPPC64)
 export CGO_ENABLED ?= 0
 
 GOFLAGS := -trimpath
-LDFLAGS := -s -w -X "github.com/hectorm/cardea/internal/config.version=$(VERSION)"
+LDFLAGS := -s -w -X "github.com/hectorm/cardea/internal/config.Version=$(VERSION)"
 
 SRCS := $(shell '$(GIT)' ls-files '*.go' 2>/dev/null ||:)
 EXEC := cardea-$(VERSION)-$(GOOS)-$(GOARCH)

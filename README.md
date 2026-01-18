@@ -49,7 +49,9 @@ Download from the [releases page](https://github.com/hectorm/cardea/releases). B
 
 ```
 -listen string
-      address to listen on (env CARDEA_LISTEN) (default ":2222")
+      address for SSH server (env CARDEA_LISTEN) (default ":2222")
+-health-listen string
+      address for health/metrics server; disabled if empty (env CARDEA_HEALTH_LISTEN) (default "localhost:9222")
 -key-strategy string
       key strategy for bastion host/backend authentication: file, tpm (env CARDEA_KEY_STRATEGY) (default "file")
 -private-key-file string

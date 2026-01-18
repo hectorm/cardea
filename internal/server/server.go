@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/hectorm/cardea/internal/config"
 	"github.com/hectorm/cardea/internal/credential"
+	"github.com/hectorm/cardea/internal/metrics"
 	"github.com/hectorm/cardea/internal/ratelimit"
 	"github.com/hectorm/cardea/internal/recorder"
 	"github.com/hectorm/cardea/internal/tpm"
@@ -50,10 +52,11 @@ type Server struct {
 	hostKeysMu           sync.RWMutex
 	listener             net.Listener
 	connMap              sync.Map
-	connNum              int64
+	connNum              atomic.Int64
 	rateLimit            *ratelimit.RateLimit
 	recordingsMaxPercent float64
 	recordingsMaxBytes   int64
+	metrics              *metrics.Metrics
 	ctx                  context.Context
 	cancel               context.CancelFunc
 	done                 chan struct{}
@@ -73,10 +76,11 @@ func NewServer(cfg *config.Config, opts ...Option) (*Server, error) {
 
 	cfgCopy := *cfg
 	srv := &Server{
-		config: &cfgCopy,
-		ctx:    ctx,
-		cancel: cancel,
-		done:   make(chan struct{}),
+		config:  &cfgCopy,
+		metrics: metrics.NewMetrics(),
+		ctx:     ctx,
+		cancel:  cancel,
+		done:    make(chan struct{}),
 	}
 
 	for _, opt := range opts {
@@ -204,7 +208,7 @@ func WithRateLimit(rateLimit *ratelimit.RateLimit) Option {
 }
 
 func (srv *Server) Start() error {
-	slog.Info("starting server")
+	slog.Info("starting SSH server")
 
 	go srv.fileWatcher()
 
@@ -217,7 +221,7 @@ func (srv *Server) Start() error {
 		return err
 	}
 
-	slog.Info("listening",
+	slog.Info("SSH server listening",
 		"address", srv.Address(),
 		"fingerprint", ssh.FingerprintSHA256(srv.signer.PublicKey()),
 		"public_key", srv.marshalAuthorizedKey(srv.signer.PublicKey()),
@@ -254,7 +258,7 @@ func (srv *Server) Start() error {
 }
 
 func (srv *Server) Stop() error {
-	slog.Info("stopping server")
+	slog.Info("stopping SSH server")
 
 	srv.cancel()
 
@@ -286,7 +290,7 @@ func (srv *Server) Stop() error {
 
 	select {
 	case <-done:
-		slog.Info("all connections closed gracefully")
+		slog.Info("all SSH connections closed gracefully")
 	case <-time.After(10 * time.Second):
 		slog.Warn("shutdown timeout, some connections may have been forcefully closed")
 	}
@@ -313,6 +317,10 @@ func (srv *Server) Config() config.Config {
 	return *srv.config
 }
 
+func (srv *Server) Metrics() *metrics.Metrics {
+	return srv.metrics
+}
+
 func (srv *Server) Done() <-chan struct{} {
 	return srv.done
 }
@@ -325,8 +333,13 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 		}
 	}()
 
-	connNum := atomic.AddInt64(&srv.connNum, 1)
-	defer atomic.AddInt64(&srv.connNum, -1)
+	connNum := srv.connNum.Add(1)
+	srv.metrics.ConnectionsActive.Add(1)
+	srv.metrics.ConnectionsTotal.Add(1)
+	defer func() {
+		srv.connNum.Add(-1)
+		srv.metrics.ConnectionsActive.Add(-1)
+	}()
 	if connNum > int64(srv.config.ConnectionsMax) && srv.config.ConnectionsMax > 0 {
 		return fmt.Errorf("max connections reached")
 	}
@@ -337,6 +350,7 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 	}
 
 	if srv.rateLimit != nil && !srv.rateLimit.Allow(ip) {
+		srv.metrics.RateLimitRejectionsTotal.Add(1)
 		return fmt.Errorf("rate limit exceeded for %s", ip)
 	}
 
@@ -436,6 +450,10 @@ func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.
 		return err
 	}
 	defer func() { _ = frontendChannel.Close() }()
+
+	srv.metrics.SessionsTotal.Add(1)
+	srv.metrics.SessionsActive.Add(1)
+	defer srv.metrics.SessionsActive.Add(-1)
 
 	var asciicastRec *recorder.AsciicastV3Recorder
 	var asciicastHeader *recorder.AsciicastV3Header
@@ -822,6 +840,10 @@ func (srv *Server) handleDirectTCPIP(frontendConn *ssh.ServerConn, backendConn *
 	}
 	defer func() { _ = clientChannel.Close() }()
 
+	srv.metrics.PortForwardsLocalTotal.Add(1)
+	srv.metrics.PortForwardsLocalActive.Add(1)
+	defer srv.metrics.PortForwardsLocalActive.Add(-1)
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -932,6 +954,10 @@ func (srv *Server) handleForwardedTCPIP(frontendConn *ssh.ServerConn, newChannel
 
 	go ssh.DiscardRequests(backendRequests)
 
+	srv.metrics.PortForwardsRemoteTotal.Add(1)
+	srv.metrics.PortForwardsRemoteActive.Add(1)
+	defer srv.metrics.PortForwardsRemoteActive.Add(-1)
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -963,6 +989,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 
 	authKeyEntries, ok := srv.authKeysDB[string(key.Marshal())]
 	if !ok {
+		srv.metrics.AuthFailuresUnknownKeyTotal.Add(1)
 		slog.Info("access denied, not in authorized keys list",
 			"backend", conn.User(),
 			"remote_addr", conn.RemoteAddr(),
@@ -974,6 +1001,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 
 	backend, err := parsePermitConnect(conn.User())
 	if err != nil {
+		srv.metrics.AuthFailuresInvalidBackendTotal.Add(1)
 		slog.Info("access denied, invalid backend format",
 			"backend", conn.User(),
 			"remote_addr", conn.RemoteAddr(),
@@ -1002,6 +1030,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 	}
 
 	if authKeyOpts == nil {
+		srv.metrics.AuthFailuresDeniedBackendTotal.Add(1)
 		slog.Info("access denied, not in allowed backend list",
 			"backend", conn.User(),
 			"remote_addr", conn.RemoteAddr(),
@@ -1017,6 +1046,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 		return nil, fmt.Errorf("internal error")
 	}
 
+	srv.metrics.AuthSuccessesTotal.Add(1)
 	slog.Info("access allowed",
 		"backend", conn.User(),
 		"remote_addr", conn.RemoteAddr(),
@@ -1044,6 +1074,7 @@ func (srv *Server) hostKeyCallback(host string, remote net.Addr, key ssh.PublicK
 
 		// Host key mismatch
 		if len(khErr.Want) > 0 {
+			srv.metrics.BackendErrorsMismatchedHostkeyTotal.Add(1)
 			return khErr
 		}
 
@@ -1069,6 +1100,7 @@ func (srv *Server) hostKeyCallback(host string, remote net.Addr, key ssh.PublicK
 		case "strict":
 			fallthrough
 		default:
+			srv.metrics.BackendErrorsUnknownHostTotal.Add(1)
 			return khErr
 		}
 	}
@@ -1153,7 +1185,13 @@ func (srv *Server) newFrontendConnection(tcpConn net.Conn) (*ssh.ServerConn, <-c
 		}
 	}
 
-	sshConn, channels, requests, err := ssh.NewServerConn(tcpConn, srv.sshServerConfig)
+	countedConn := &countingConn{
+		Conn:         tcpConn,
+		bytesRead:    &srv.metrics.ReceivedBytesTotal,
+		bytesWritten: &srv.metrics.SentBytesTotal,
+	}
+
+	sshConn, channels, requests, err := ssh.NewServerConn(countedConn, srv.sshServerConfig)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1173,6 +1211,14 @@ func (srv *Server) newBackendConnection(permitconnect *PermitConnect) (*ssh.Clie
 	dialer := &net.Dialer{Timeout: sshConnTimeout}
 	tcpConn, err := dialer.Dial("tcp", addr)
 	if err != nil {
+		switch {
+		case os.IsTimeout(err):
+			srv.metrics.BackendErrorsTimeoutTotal.Add(1)
+		case errors.Is(err, syscall.ECONNREFUSED) || strings.Contains(err.Error(), "refused"):
+			srv.metrics.BackendErrorsRefusedTotal.Add(1)
+		default:
+			srv.metrics.BackendErrorsOtherTotal.Add(1)
+		}
 		return nil, err
 	}
 
@@ -1200,6 +1246,14 @@ func (srv *Server) newBackendConnection(permitconnect *PermitConnect) (*ssh.Clie
 	sshConn, chans, reqs, err := ssh.NewClientConn(tcpConn, addr, &sshClientConfig)
 	if err != nil {
 		_ = tcpConn.Close()
+		switch {
+		case os.IsTimeout(err):
+			srv.metrics.BackendErrorsTimeoutTotal.Add(1)
+		case strings.Contains(err.Error(), "unable to authenticate"):
+			srv.metrics.BackendErrorsFailedAuthTotal.Add(1)
+		case !errors.As(err, new(*knownhosts.KeyError)):
+			srv.metrics.BackendErrorsOtherTotal.Add(1)
+		}
 		return nil, err
 	}
 

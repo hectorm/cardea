@@ -86,7 +86,7 @@ func WithSigner(signer ssh.Signer) Option {
 }
 
 func (srv *Server) Start() error {
-	slog.Info("starting server")
+	slog.Info("starting SSH server")
 
 	var err error
 	if srv.listener, err = net.Listen("tcp", "[::1]:0"); err != nil {
@@ -95,7 +95,7 @@ func (srv *Server) Start() error {
 		}
 	}
 
-	slog.Info("listening", "address", srv.Address())
+	slog.Info("SSH server listening", "address", srv.Address())
 
 	go func() {
 		for {
@@ -128,7 +128,7 @@ func (srv *Server) Start() error {
 }
 
 func (srv *Server) Stop() error {
-	slog.Info("stopping server")
+	slog.Info("stopping SSH server")
 
 	srv.cancel()
 
@@ -154,7 +154,7 @@ func (srv *Server) Stop() error {
 
 	select {
 	case <-done:
-		slog.Info("all connections closed gracefully")
+		slog.Info("all SSH connections closed gracefully")
 	case <-time.After(10 * time.Second):
 		slog.Warn("shutdown timeout, some connections may have been forcefully closed")
 	}
