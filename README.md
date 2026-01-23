@@ -301,4 +301,4 @@ tpm2_evictcontrol -C o -c 0x81000001
 
 ## License
 
-[EUPL-v1.2-or-later](./LICENSE) © [Héctor Molinero Fernández](https://hector.molinero.dev).
+Licensed under the [European Union Public Licence v. 1.2 or later](./LICENSE) © [Héctor Molinero Fernández](https://hector.molinero.dev). Review the license conditions before use or distribution.
