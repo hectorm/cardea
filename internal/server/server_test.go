@@ -785,6 +785,7 @@ func TestBastionSSHServer(t *testing.T) {
 				return nil
 			}); err != nil {
 				t.Error(err)
+				return
 			}
 		})
 
@@ -846,6 +847,7 @@ func TestBastionSSHServer(t *testing.T) {
 				return nil
 			}); err != nil {
 				t.Error(err)
+				return
 			}
 		})
 
@@ -971,6 +973,7 @@ func TestBastionSSHServer(t *testing.T) {
 					return nil
 				}); err != nil {
 					t.Error(err)
+					return
 				}
 			})
 
@@ -1008,6 +1011,7 @@ func TestBastionSSHServer(t *testing.T) {
 				return nil
 			}); err != nil {
 				t.Error(err)
+				return
 			}
 		})
 	})
@@ -1225,6 +1229,7 @@ func TestBastionSSHServer(t *testing.T) {
 			return nil
 		}); err != nil {
 			t.Error(err)
+			return
 		}
 
 	})
@@ -2982,20 +2987,14 @@ func TestBastionSSHServer(t *testing.T) {
 			return
 		}
 
-		ticker := time.NewTicker(25 * time.Millisecond)
-		deadline := time.NewTimer(10 * time.Second)
-		defer func() { ticker.Stop(); deadline.Stop() }()
-
-		for {
-			select {
-			case <-ticker.C:
-				if _, err := connectToServer(t, cli, bastionSrv); err == nil {
-					return
-				}
-			case <-deadline.C:
-				t.Error("expected connection to succeed after updating authorized_keys, but it failed")
-				return
+		if err := waitFor(10*time.Second, func() error {
+			if _, err := connectToServer(t, cli, bastionSrv); err != nil {
+				return fmt.Errorf("expected connection to succeed after updating authorized_keys: %v", err)
 			}
+			return nil
+		}); err != nil {
+			t.Error(err)
+			return
 		}
 	})
 
@@ -3611,6 +3610,7 @@ func TestBastionSSHServer(t *testing.T) {
 					return nil
 				}); err != nil {
 					t.Error(err)
+					return
 				}
 			})
 
@@ -3668,6 +3668,7 @@ func TestBastionSSHServer(t *testing.T) {
 					return nil
 				}); err != nil {
 					t.Error(err)
+					return
 				}
 			})
 
@@ -3776,6 +3777,7 @@ func TestBastionSSHServer(t *testing.T) {
 					return nil
 				}); err != nil {
 					t.Error(err)
+					return
 				}
 			})
 
@@ -3821,6 +3823,7 @@ func TestBastionSSHServer(t *testing.T) {
 					return nil
 				}); err != nil {
 					t.Error(err)
+					return
 				}
 			})
 
@@ -3851,6 +3854,7 @@ func TestBastionSSHServer(t *testing.T) {
 					return nil
 				}); err != nil {
 					t.Error(err)
+					return
 				}
 			})
 
@@ -3886,6 +3890,7 @@ func TestBastionSSHServer(t *testing.T) {
 					return nil
 				}); err != nil {
 					t.Error(err)
+					return
 				}
 			})
 
@@ -3917,6 +3922,7 @@ func TestBastionSSHServer(t *testing.T) {
 					return nil
 				}); err != nil {
 					t.Error(err)
+					return
 				}
 			})
 
@@ -3948,6 +3954,7 @@ func TestBastionSSHServer(t *testing.T) {
 					return nil
 				}); err != nil {
 					t.Error(err)
+					return
 				}
 			})
 
@@ -4001,6 +4008,7 @@ func TestBastionSSHServer(t *testing.T) {
 					return nil
 				}); err != nil {
 					t.Error(err)
+					return
 				}
 			})
 
@@ -4030,6 +4038,7 @@ func TestBastionSSHServer(t *testing.T) {
 					return nil
 				}); err != nil {
 					t.Error(err)
+					return
 				}
 			})
 
@@ -4059,6 +4068,7 @@ func TestBastionSSHServer(t *testing.T) {
 					return nil
 				}); err != nil {
 					t.Error(err)
+					return
 				}
 			})
 
@@ -4088,6 +4098,7 @@ func TestBastionSSHServer(t *testing.T) {
 					return nil
 				}); err != nil {
 					t.Error(err)
+					return
 				}
 			})
 
@@ -4117,6 +4128,7 @@ func TestBastionSSHServer(t *testing.T) {
 					return nil
 				}); err != nil {
 					t.Error(err)
+					return
 				}
 			})
 
