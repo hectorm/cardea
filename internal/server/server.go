@@ -30,6 +30,7 @@ import (
 	"github.com/hectorm/cardea/internal/ratelimit"
 	"github.com/hectorm/cardea/internal/recorder"
 	"github.com/hectorm/cardea/internal/tpm"
+	"github.com/hectorm/cardea/internal/utils/ansi"
 	"github.com/hectorm/cardea/internal/utils/bytesize"
 	"github.com/hectorm/cardea/internal/utils/disk"
 )
@@ -50,6 +51,8 @@ type Server struct {
 	authKeysMu           sync.RWMutex
 	hostKeysCB           ssh.HostKeyCallback
 	hostKeysMu           sync.RWMutex
+	banner               string
+	bannerMu             sync.RWMutex
 	listener             net.Listener
 	connMap              sync.Map
 	connNum              atomic.Int64
@@ -152,6 +155,14 @@ func NewServer(cfg *config.Config, opts ...Option) (*Server, error) {
 		srv.hostKeysCB = hostKeysCB
 	}
 
+	if srv.config.BannerFile != "" {
+		banner, err := srv.loadBanner(srv.config.BannerFile)
+		if err != nil {
+			return nil, err
+		}
+		srv.banner = banner
+	}
+
 	if srv.rateLimit == nil && srv.config.RateLimitMax > 0 {
 		srv.rateLimit = ratelimit.NewRateLimit(10000, srv.config.RateLimitMax, srv.config.RateLimitTime)
 	}
@@ -166,6 +177,7 @@ func NewServer(cfg *config.Config, opts ...Option) (*Server, error) {
 	srv.sshServerConfig = &ssh.ServerConfig{
 		ServerVersion:     "SSH-2.0-Cardea",
 		PublicKeyCallback: srv.publicKeyCallback,
+		BannerCallback:    srv.bannerCallback,
 		MaxAuthTries:      6,
 	}
 	srv.sshServerConfig.AddHostKey(srv.signer)
@@ -1173,6 +1185,24 @@ func (srv *Server) hostKeyAlgorithms(host string) ([]string, error) {
 	return nil, fmt.Errorf("no host key algorithms available for %s", host)
 }
 
+func (srv *Server) loadBanner(path string) (string, error) {
+	path = filepath.Clean(path)
+
+	banner, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read banner file: %w", err)
+	}
+
+	return string(ansi.StripEscapes(banner)), nil
+}
+
+func (srv *Server) bannerCallback(conn ssh.ConnMetadata) string {
+	srv.bannerMu.RLock()
+	defer srv.bannerMu.RUnlock()
+
+	return srv.banner
+}
+
 func (srv *Server) newFrontendConnection(tcpConn net.Conn) (*ssh.ServerConn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
 	// Set a read deadline for the initial handshake to mitigate slowloris attacks
 	_ = tcpConn.SetReadDeadline(time.Now().Add(sshConnTimeout))
@@ -1346,9 +1376,17 @@ func (srv *Server) fileWatcher() {
 	authorizedKeysFile := filepath.Clean(srv.config.AuthorizedKeysFile)
 	knownHostsFile := filepath.Clean(srv.config.KnownHostsFile)
 
+	var bannerFile string
+	if srv.config.BannerFile != "" {
+		bannerFile = filepath.Clean(srv.config.BannerFile)
+	}
+
 	dirs := map[string]struct{}{}
 	dirs[filepath.Dir(authorizedKeysFile)] = struct{}{}
 	dirs[filepath.Dir(knownHostsFile)] = struct{}{}
+	if bannerFile != "" {
+		dirs[filepath.Dir(bannerFile)] = struct{}{}
+	}
 	for dir := range dirs {
 		if err := watcher.Add(dir); err != nil {
 			slog.Error("failed to watch directory", "dir", dir, "error", err)
@@ -1371,7 +1409,7 @@ func (srv *Server) fileWatcher() {
 			}
 
 			file := filepath.Clean(event.Name)
-			if file != authorizedKeysFile && file != knownHostsFile {
+			if file != authorizedKeysFile && file != knownHostsFile && file != bannerFile {
 				continue
 			}
 
@@ -1402,6 +1440,16 @@ func (srv *Server) fileWatcher() {
 							srv.hostKeysCB = hostKeysCB
 							srv.hostKeysMu.Unlock()
 							slog.Debug("reloaded known hosts file", "file", file)
+						}
+					case bannerFile:
+						banner, err := srv.loadBanner(file)
+						if err != nil {
+							slog.Error("error reloading banner file", "error", err)
+						} else {
+							srv.bannerMu.Lock()
+							srv.banner = banner
+							srv.bannerMu.Unlock()
+							slog.Debug("reloaded banner file", "file", file)
 						}
 					}
 				})

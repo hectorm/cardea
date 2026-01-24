@@ -3459,6 +3459,73 @@ func TestBastionSSHServer(t *testing.T) {
 		})
 	})
 
+	t.Run("banner", func(t *testing.T) {
+		cli, cliPublicKey, err := setupClient(t)
+		if err != nil {
+			t.Errorf("failed to setup client: %v", err)
+			return
+		}
+		cli.User = fmt.Sprintf("alice@%s", mockAddr)
+		cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
+
+		bannerFile := filepath.Join(t.TempDir(), "banner.txt")
+		initialBanner := "\x1b[1;32mWelcome\x1b[0m to Cardea\n"
+		if err := os.WriteFile(bannerFile, []byte(initialBanner), 0600); err != nil {
+			t.Errorf("failed to write banner file: %v", err)
+			return
+		}
+
+		bastionSrv, err := setupBastionServer(t,
+			fmt.Sprintf(`permitconnect="alice@%s" %s`, mockAddr, cliAuthorizedKeyStr),
+			fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+			func(srv *Server) error {
+				srv.config.BannerFile = bannerFile
+				return nil
+			},
+		)
+		if err != nil {
+			t.Errorf("failed to setup bastion server: %v", err)
+			return
+		}
+
+		var receivedBanner string
+		cli.BannerCallback = func(message string) error {
+			receivedBanner = message
+			return nil
+		}
+
+		if _, err := connectToServer(t, cli, bastionSrv); err != nil {
+			t.Errorf("failed to connect to server: %v", err)
+			return
+		}
+
+		expectedBanner := "Welcome to Cardea\n"
+		if receivedBanner != expectedBanner {
+			t.Errorf("expected banner %q, got %q", expectedBanner, receivedBanner)
+			return
+		}
+
+		updatedBanner := "Updated banner\n"
+		if err := os.WriteFile(bannerFile, []byte(updatedBanner), 0600); err != nil {
+			t.Errorf("failed to update banner file: %v", err)
+			return
+		}
+
+		if err := waitFor(10*time.Second, func() error {
+			receivedBanner = ""
+			if _, err := connectToServer(t, cli, bastionSrv); err != nil {
+				return err
+			}
+			if receivedBanner != updatedBanner {
+				return fmt.Errorf("expected banner %q, got %q", updatedBanner, receivedBanner)
+			}
+			return nil
+		}); err != nil {
+			t.Error(err)
+			return
+		}
+	})
+
 	t.Run("health_server", func(t *testing.T) {
 		cliAuthorized, cliAuthorizedPublicKey, err := setupClient(t)
 		if err != nil {

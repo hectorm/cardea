@@ -80,6 +80,8 @@ Download from the [releases page](https://github.com/hectorm/cardea/releases). B
       path to the known hosts file (env CARDEA_KNOWN_HOSTS_FILE) (default "/etc/cardea/known_hosts")
 -unknown-hosts-policy string
       policy for unknown hosts: strict (deny unknown), tofu (trust on first use) (env CARDEA_UNKNOWN_HOSTS_POLICY) (default "strict")
+-banner-file string
+      path to the banner file; disabled if empty (env CARDEA_BANNER_FILE)
 -connections-max int
       maximum number of concurrent connections; 0 for unlimited (env CARDEA_CONNECTIONS_MAX) (default 1000)
 -rate-limit-max int

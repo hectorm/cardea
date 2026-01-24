@@ -31,6 +31,7 @@ type Config struct {
 	AuthorizedKeysFile       string
 	KnownHostsFile           string
 	UnknownHostsPolicy       string
+	BannerFile               string
 	ConnectionsMax           int
 	RateLimitMax             int
 	RateLimitTime            time.Duration
@@ -166,6 +167,13 @@ func NewConfig() *Config {
 		"unknown-hosts-policy",
 		env.StringEnv("strict", "CARDEA_UNKNOWN_HOSTS_POLICY"),
 		"policy for unknown hosts: strict (deny unknown), tofu (trust on first use) (env CARDEA_UNKNOWN_HOSTS_POLICY)",
+	)
+
+	flag.StringVar(
+		&config.BannerFile,
+		"banner-file",
+		env.StringEnv("", "CARDEA_BANNER_FILE"),
+		"path to the banner file; disabled if empty (env CARDEA_BANNER_FILE)",
 	)
 
 	flag.IntVar(
