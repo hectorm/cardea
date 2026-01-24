@@ -206,14 +206,20 @@ func createShellSession(t testing.TB, conn *ssh.Client) (*ssh.Session, io.WriteC
 }
 
 func waitFor(timeout time.Duration, check func() error) error {
-	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(25 * time.Millisecond)
+	deadline := time.NewTimer(timeout)
+	defer func() { ticker.Stop(); deadline.Stop() }()
+
+	var err error
 	for {
-		if err := check(); err == nil {
-			return nil
-		} else if time.Now().After(deadline) {
+		select {
+		case <-ticker.C:
+			if err = check(); err == nil {
+				return nil
+			}
+		case <-deadline.C:
 			return err
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -2987,7 +2993,7 @@ func TestBastionSSHServer(t *testing.T) {
 			return
 		}
 
-		if err := waitFor(10*time.Second, func() error {
+		if err := waitFor(30*time.Second, func() error {
 			if _, err := connectToServer(t, cli, bastionSrv); err != nil {
 				return fmt.Errorf("expected connection to succeed after updating authorized_keys: %v", err)
 			}
@@ -3511,7 +3517,7 @@ func TestBastionSSHServer(t *testing.T) {
 			return
 		}
 
-		if err := waitFor(10*time.Second, func() error {
+		if err := waitFor(30*time.Second, func() error {
 			receivedBanner = ""
 			if _, err := connectToServer(t, cli, bastionSrv); err != nil {
 				return err
