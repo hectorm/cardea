@@ -55,14 +55,14 @@ func NewConfig() *Config {
 		&config.Listen,
 		"listen",
 		env.StringEnv(":2222", "CARDEA_LISTEN"),
-		"address for SSH server (env CARDEA_LISTEN)",
+		"address for the SSH server (env CARDEA_LISTEN)",
 	)
 
 	flag.StringVar(
 		&config.HealthListen,
 		"health-listen",
 		env.StringEnv("localhost:9222", "CARDEA_HEALTH_LISTEN"),
-		"address for health/metrics server; disabled if empty (env CARDEA_HEALTH_LISTEN)",
+		"address for the health/metrics server; disabled if empty (env CARDEA_HEALTH_LISTEN)",
 	)
 
 	flag.StringVar(
@@ -90,7 +90,7 @@ func NewConfig() *Config {
 		&config.PrivateKeyPassphraseFile,
 		"private-key-passphrase-file",
 		env.StringEnv("", "CARDEA_PRIVATE_KEY_PASSPHRASE_FILE"),
-		"path to file containing the private key passphrase (env CARDEA_PRIVATE_KEY_PASSPHRASE_FILE)",
+		"path to the file containing the private key passphrase (env CARDEA_PRIVATE_KEY_PASSPHRASE_FILE)",
 	)
 
 	switch runtime.GOOS {
@@ -123,7 +123,7 @@ func NewConfig() *Config {
 		&config.TPMParentAuthFile,
 		"tpm-parent-auth-file",
 		env.StringEnv("", "CARDEA_TPM_PARENT_AUTH_FILE"),
-		"path to file containing the parent key authorization (env CARDEA_TPM_PARENT_AUTH_FILE)",
+		"path to the file containing the parent key authorization (env CARDEA_TPM_PARENT_AUTH_FILE)",
 	)
 
 	flag.StringVar(
@@ -144,7 +144,7 @@ func NewConfig() *Config {
 		&config.TPMKeyAuthFile,
 		"tpm-key-auth-file",
 		env.StringEnv("", "CARDEA_TPM_KEY_AUTH_FILE"),
-		"path to file containing the key authorization (env CARDEA_TPM_KEY_AUTH_FILE)",
+		"path to the file containing the key authorization (env CARDEA_TPM_KEY_AUTH_FILE)",
 	)
 
 	flag.StringVar(
@@ -193,14 +193,14 @@ func NewConfig() *Config {
 		&config.RecordingsDir,
 		"recordings-dir",
 		env.StringEnv("", "CARDEA_RECORDINGS_DIR"),
-		"directory to store session recordings; disabled if empty (env CARDEA_RECORDINGS_DIR)",
+		"path to the session recordings directory; disabled if empty (env CARDEA_RECORDINGS_DIR)",
 	)
 
 	flag.DurationVar(
 		&config.RecordingsRetentionTime,
 		"recordings-retention-time",
 		env.DurationEnv(30*24*time.Hour, "CARDEA_RECORDINGS_RETENTION_TIME"),
-		"time to retain session recordings (env CARDEA_RECORDINGS_RETENTION_TIME)",
+		"retention time for the session recordings (env CARDEA_RECORDINGS_RETENTION_TIME)",
 	)
 
 	flag.StringVar(

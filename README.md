@@ -49,9 +49,9 @@ Download from the [releases page](https://github.com/hectorm/cardea/releases). B
 
 ```
 -listen string
-      address for SSH server (env CARDEA_LISTEN) (default ":2222")
+      address for the SSH server (env CARDEA_LISTEN) (default ":2222")
 -health-listen string
-      address for health/metrics server; disabled if empty (env CARDEA_HEALTH_LISTEN) (default "localhost:9222")
+      address for the health/metrics server; disabled if empty (env CARDEA_HEALTH_LISTEN) (default "localhost:9222")
 -key-strategy string
       key strategy for bastion host/backend authentication: file, tpm (env CARDEA_KEY_STRATEGY) (default "file")
 -private-key-file string
@@ -59,7 +59,7 @@ Download from the [releases page](https://github.com/hectorm/cardea/releases). B
 -private-key-passphrase string
       passphrase for the private key (env CARDEA_PRIVATE_KEY_PASSPHRASE)
 -private-key-passphrase-file string
-      path to file containing the private key passphrase (env CARDEA_PRIVATE_KEY_PASSPHRASE_FILE)
+      path to the file containing the private key passphrase (env CARDEA_PRIVATE_KEY_PASSPHRASE_FILE)
 -tpm-device string
       path to the TPM device (env CARDEA_TPM_DEVICE) (default "/dev/tpmrm0")
 -tpm-parent-handle string
@@ -67,13 +67,13 @@ Download from the [releases page](https://github.com/hectorm/cardea/releases). B
 -tpm-parent-auth string
       authorization value for the parent key (env CARDEA_TPM_PARENT_AUTH)
 -tpm-parent-auth-file string
-      path to file containing the parent key authorization (env CARDEA_TPM_PARENT_AUTH_FILE)
+      path to the file containing the parent key authorization (env CARDEA_TPM_PARENT_AUTH_FILE)
 -tpm-key-file string
       path to the key blob (env CARDEA_TPM_KEY_FILE) (default "/etc/cardea/tpm_key.blob")
 -tpm-key-auth string
       authorization value for the key (env CARDEA_TPM_KEY_AUTH)
 -tpm-key-auth-file string
-      path to file containing the key authorization (env CARDEA_TPM_KEY_AUTH_FILE)
+      path to the file containing the key authorization (env CARDEA_TPM_KEY_AUTH_FILE)
 -authorized-keys-file string
       path to the authorized keys file (env CARDEA_AUTHORIZED_KEYS_FILE) (default "/etc/cardea/authorized_keys")
 -known-hosts-file string
@@ -87,9 +87,9 @@ Download from the [releases page](https://github.com/hectorm/cardea/releases). B
 -rate-limit-time duration
       time window for rate limiting unauthenticated requests (env CARDEA_RATE_LIMIT_TIME) (default 5m0s)
 -recordings-dir string
-      directory to store session recordings; disabled if empty (env CARDEA_RECORDINGS_DIR)
+      path to the session recordings directory; disabled if empty (env CARDEA_RECORDINGS_DIR)
 -recordings-retention-time duration
-      time to retain session recordings (env CARDEA_RECORDINGS_RETENTION_TIME) (default 720h0m0s)
+      retention time for the session recordings (env CARDEA_RECORDINGS_RETENTION_TIME) (default 720h0m0s)
 -recordings-max-disk-usage string
       maximum disk usage for session recordings; accepts percentage (e.g. 90%) or fixed size (e.g. 1GB) (env CARDEA_RECORDINGS_MAX_DISK_USAGE) (default "90%")
 -log-level string
