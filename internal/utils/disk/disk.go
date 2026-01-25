@@ -79,13 +79,13 @@ func ReadFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 
 	f, err := root.OpenFile(base, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	return io.ReadAll(f)
 }
@@ -99,7 +99,7 @@ func WriteFile(path string, data []byte, perm os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 
 	var rndBuf [8]byte
 	if _, err := rand.Read(rndBuf[:]); err != nil {

@@ -996,7 +996,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 	srv.authKeysMu.RLock()
 	defer srv.authKeysMu.RUnlock()
 
-	sessionId := hex.EncodeToString(conn.SessionID()[:10])
+	sessionID := hex.EncodeToString(conn.SessionID()[:10])
 	publicKey := srv.marshalAuthorizedKey(key)
 
 	authKeyEntries, ok := srv.authKeysDB[string(key.Marshal())]
@@ -1005,7 +1005,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 		slog.Info("access denied, not in authorized keys list",
 			"backend", conn.User(),
 			"remote_addr", conn.RemoteAddr(),
-			"session_id", sessionId,
+			"session_id", sessionID,
 			"public_key", publicKey,
 		)
 		return nil, fmt.Errorf("public key not authorized")
@@ -1017,7 +1017,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 		slog.Info("access denied, invalid backend format",
 			"backend", conn.User(),
 			"remote_addr", conn.RemoteAddr(),
-			"session_id", sessionId,
+			"session_id", sessionID,
 			"public_key", publicKey,
 		)
 		return nil, fmt.Errorf("public key not authorized")
@@ -1046,7 +1046,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 		slog.Info("access denied, not in allowed backend list",
 			"backend", conn.User(),
 			"remote_addr", conn.RemoteAddr(),
-			"session_id", sessionId,
+			"session_id", sessionID,
 			"public_key", publicKey,
 		)
 		return nil, fmt.Errorf("public key not authorized")
@@ -1062,7 +1062,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 	slog.Info("access allowed",
 		"backend", conn.User(),
 		"remote_addr", conn.RemoteAddr(),
-		"session_id", sessionId,
+		"session_id", sessionID,
 		"public_key", publicKey,
 	)
 	return &ssh.Permissions{

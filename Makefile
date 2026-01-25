@@ -79,7 +79,7 @@ govulncheck:
 
 .PHONY: staticcheck
 staticcheck:
-	'$(STATICCHECK)' -tests $(STATICCHECK_ARGS) ./...
+	'$(STATICCHECK)' -tests -checks=all,-ST1000 $(STATICCHECK_ARGS) ./...
 
 .PHONY: test
 test:

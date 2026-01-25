@@ -115,7 +115,7 @@ func TestDisk(t *testing.T) {
 			t.Errorf("failed to open root: %v", err)
 			return
 		}
-		defer root.Close()
+		defer func() { _ = root.Close() }()
 
 		file1, err := root.OpenFile(base, os.O_RDWR, 0600)
 		if err != nil {
@@ -224,7 +224,7 @@ func TestDisk(t *testing.T) {
 				t.Errorf("failed to open root: %v", err)
 				return
 			}
-			defer root.Close()
+			defer func() { _ = root.Close() }()
 
 			data, err := root.ReadFile("existing.txt")
 			if err != nil {
@@ -252,7 +252,7 @@ func TestDisk(t *testing.T) {
 				t.Errorf("failed to open root: %v", err)
 				return
 			}
-			defer root.Close()
+			defer func() { _ = root.Close() }()
 
 			data, err := root.ReadFile("new.txt")
 			if err != nil {
