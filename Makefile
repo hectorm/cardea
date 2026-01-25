@@ -11,10 +11,15 @@ bindir ?= $(exec_prefix)/bin
 
 GIT := git
 GO := go
+GO_TEST_ARGS ?=
 GOFMT := gofmt
+GOFMT_ARGS ?=
 GOSEC := gosec
+GOSEC_ARGS ?=
 GOVULNCHECK := govulncheck
+GOVULNCHECK_ARGS ?=
 STATICCHECK := staticcheck
+STATICCHECK_ARGS ?=
 INSTALL := install
 
 INSTALL_PROGRAM := $(INSTALL)
@@ -57,29 +62,28 @@ run: ./dist/$(EXEC)
 	@mkdir -p "$$(dirname '$@')"
 	'$(GO)' build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o '$@' ./cmd/cardea/
 
+.PHONY: lint
+lint: gofmt gosec govulncheck staticcheck
+
 .PHONY: gofmt
 gofmt:
-	@test -z "$$('$(GOFMT)' -s -l ./ | tee /dev/stderr)"
+	@test -z "$$('$(GOFMT)' -s -l $(GOFMT_ARGS) ./ | tee /dev/stderr)"
 
 .PHONY: gosec
 gosec:
-	'$(GOSEC)' -tests ./...
+	'$(GOSEC)' -tests $(GOSEC_ARGS) ./...
 
 .PHONY: govulncheck
 govulncheck:
-	'$(GOVULNCHECK)' -test ./...
+	'$(GOVULNCHECK)' -test $(GOVULNCHECK_ARGS) ./...
 
 .PHONY: staticcheck
 staticcheck:
-	'$(STATICCHECK)' -tests ./...
+	'$(STATICCHECK)' -tests $(STATICCHECK_ARGS) ./...
 
 .PHONY: test
 test:
-	'$(GO)' test -v -count=1 -timeout=120s ./...
-
-.PHONY: test-race
-test-race:
-	CGO_ENABLED=1 '$(GO)' test -v -count=1 -timeout=240s -race ./...
+	'$(GO)' test -v -count=1 $(GO_TEST_ARGS) ./...
 
 .PHONY: install
 install:

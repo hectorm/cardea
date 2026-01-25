@@ -37,6 +37,7 @@ jobs:
     runs-on: "ubuntu-latest"
     permissions:
       contents: "read"
+      security-events: "write"
     steps:
       - name: "Checkout"
         uses: "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
@@ -52,14 +53,22 @@ jobs:
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@latest
       - name: "Run gosec"
-        run:
-          make gosec
+        run: |
+          { make gosec GOSEC_ARGS="-fmt sarif -no-fail" ||:; } | tee ./gosec.sarif
+          jq -e '[.runs[].results] | add | length == 0' ./gosec.sarif >/dev/null
+      - name: "Upload SARIF"
+        if: always()
+        uses: "github/codeql-action/upload-sarif@19b2f06db2b6f5108140aeb04014ef02b648f789"
+        with:
+          sarif_file: "./gosec.sarif"
+          category: "gosec"
 
   govulncheck:
     name: "Run govulncheck"
     runs-on: "ubuntu-latest"
     permissions:
       contents: "read"
+      security-events: "write"
     steps:
       - name: "Checkout"
         uses: "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
@@ -75,8 +84,15 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
       - name: "Run govulncheck"
-        run:
-          make govulncheck
+        run: |
+          { make govulncheck GOVULNCHECK_ARGS="-format sarif" ||:; } | tee ./govulncheck.sarif
+          jq -e '[.runs[].results] | add | length == 0' ./govulncheck.sarif >/dev/null
+      - name: "Upload SARIF"
+        if: always()
+        uses: "github/codeql-action/upload-sarif@19b2f06db2b6f5108140aeb04014ef02b648f789"
+        with:
+          sarif_file: "./govulncheck.sarif"
+          category: "govulncheck"
 
   staticcheck:
     name: "Run staticcheck"
@@ -137,13 +153,11 @@ jobs:
           New-Item -ItemType Junction -Path $opensslPath -Target "C:\msys64\mingw64"
           echo "C:\msys64\mingw64\bin" >> $env:GITHUB_PATH
       - name: "Test"
-        run: |
-          make test
+        run: make test GO_TEST_ARGS="-timeout=120s"
         env:
           CGO_ENABLED: "1"
       - name: "Test (race)"
-        run: |
-          make test-race
+        run: make test GO_TEST_ARGS="-race -timeout=240s"
         env:
           CGO_ENABLED: "1"
 
