@@ -153,10 +153,6 @@ jobs:
           New-Item -ItemType Junction -Path $opensslPath -Target "C:\msys64\mingw64"
           echo "C:\msys64\mingw64\bin" >> $env:GITHUB_PATH
       - name: "Test"
-        run: make test GO_TEST_ARGS="-timeout=120s"
-        env:
-          CGO_ENABLED: "1"
-      - name: "Test (race)"
         run: make test GO_TEST_ARGS="-race -timeout=240s"
         env:
           CGO_ENABLED: "1"
