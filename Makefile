@@ -13,6 +13,7 @@ GIT := git
 GO := go
 GOFMT := gofmt
 GOSEC := gosec
+GOVULNCHECK := govulncheck
 STATICCHECK := staticcheck
 INSTALL := install
 
@@ -63,6 +64,10 @@ gofmt:
 .PHONY: gosec
 gosec:
 	'$(GOSEC)' -tests ./...
+
+.PHONY: govulncheck
+govulncheck:
+	'$(GOVULNCHECK)' -test ./...
 
 .PHONY: staticcheck
 staticcheck:
