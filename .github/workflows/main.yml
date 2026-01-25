@@ -192,7 +192,9 @@ jobs:
     needs: ["build"]
     runs-on: "ubuntu-latest"
     permissions:
+      attestations: "write"
       contents: "read"
+      id-token: "write"
       packages: "write"
     steps:
       - name: "Checkout"
@@ -233,7 +235,8 @@ jobs:
           labels: |
             org.opencontainers.image.created={{commit_date 'YYYY-MM-DDTHH:mm:ss.SSS[Z]' tz='UTC'}}
       - name: "Build and push"
-        uses: "hectorm/ghaction-docker-buildx-build@33922c57afa698702c5e79d8935676df4da1d85d"
+        id: "build-push"
+        uses: "hectorm/ghaction-docker-buildx-build@cc28557c639a7ccb0dbe0d57a8afd6c381eb38f9"
         with:
           context: "./"
           platforms: |
@@ -252,6 +255,20 @@ jobs:
             --output=type=image,push=${{ github.event_name != 'pull_request' }},rewrite-timestamp=true
             --provenance=mode=max,reproducible=true
             --sbom=true
+      - name: "Generate artifact attestation (GHCR)"
+        if: "github.event_name != 'pull_request'"
+        uses: "actions/attest-build-provenance@00014ed6ed5efc5b1ab7f7f34a39eb55d41aa4f8"
+        with:
+          subject-name: "ghcr.io/${{ github.repository }}"
+          subject-digest: "${{ steps.build-push.outputs.digest }}"
+          push-to-registry: "${{ github.event_name != 'pull_request' }}"
+      - name: "Generate artifact attestation (Docker Hub)"
+        if: "github.event_name != 'pull_request'"
+        uses: "actions/attest-build-provenance@00014ed6ed5efc5b1ab7f7f34a39eb55d41aa4f8"
+        with:
+          subject-name: "index.docker.io/${{ github.repository }}"
+          subject-digest: "${{ steps.build-push.outputs.digest }}"
+          push-to-registry: "${{ github.event_name != 'pull_request' }}"
 
   publish-github-release:
     name: "Publish GitHub release"
