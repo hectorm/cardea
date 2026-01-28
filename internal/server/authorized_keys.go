@@ -93,7 +93,7 @@ lineLoop:
 					slog.Warn("authorized_keys file parse", "line", line.line, "reason", "missing options", "context", line.raw)
 					continue lineLoop
 				}
-				keyOpts, err = parseAuthorizedKeyOptions(segOpts)
+				keyOpts, err = parseOptions(segOpts)
 				if err != nil {
 					slog.Warn("authorized_keys file parse", "line", line.line, "reason", err, "context", line.raw)
 					continue lineLoop
@@ -113,58 +113,63 @@ lineLoop:
 	return authKeysDB, nil
 }
 
-func parseAuthorizedKeyOptions(opts []string) (*AuthorizedKeyOptions, error) {
+func parseOptions(opts []string) (*AuthorizedKeyOptions, error) {
 	authKeyOpts := &AuthorizedKeyOptions{}
 
 	for _, opt := range opts {
-		if after, ok := strings.CutPrefix(opt, "permitconnect=\""); ok {
-			for val := range strings.SplitSeq(strings.TrimSuffix(after, "\""), ",") {
-				permitconnect, err := parsePermitConnect(strings.TrimSpace(val))
+		name, val, ok := splitOption(opt)
+		if !ok {
+			return nil, fmt.Errorf("malformed option: %s", opt)
+		}
+
+		switch name {
+		case "permitconnect":
+			for v := range strings.SplitSeq(val, ",") {
+				permitconnect, err := parsePermitConnect(strings.TrimSpace(v))
 				if err != nil {
 					return nil, err
 				}
 				authKeyOpts.PermitConnects = append(authKeyOpts.PermitConnects, *permitconnect)
 			}
-		} else if after, ok := strings.CutPrefix(opt, "permitopen=\""); ok {
-			for val := range strings.SplitSeq(strings.TrimSuffix(after, "\""), ",") {
-				permitopen, err := parsePermitOpen(strings.TrimSpace(val))
+		case "permitopen":
+			for v := range strings.SplitSeq(val, ",") {
+				permitopen, err := parsePermitOpen(strings.TrimSpace(v))
 				if err != nil {
 					return nil, err
 				}
 				authKeyOpts.PermitOpens = append(authKeyOpts.PermitOpens, *permitopen)
 			}
-		} else if after, ok := strings.CutPrefix(opt, "permitlisten=\""); ok {
-			for val := range strings.SplitSeq(strings.TrimSuffix(after, "\""), ",") {
-				permitlisten, err := parsePermitListen(strings.TrimSpace(val))
+		case "permitlisten":
+			for v := range strings.SplitSeq(val, ",") {
+				permitlisten, err := parsePermitListen(strings.TrimSpace(v))
 				if err != nil {
 					return nil, err
 				}
 				authKeyOpts.PermitListens = append(authKeyOpts.PermitListens, *permitlisten)
 			}
-		} else if after, ok := strings.CutPrefix(opt, "from=\""); ok {
-			for val := range strings.SplitSeq(strings.TrimSuffix(after, "\""), ",") {
-				authKeyOpts.Froms = append(authKeyOpts.Froms, strings.TrimSpace(val))
+		case "from":
+			for v := range strings.SplitSeq(val, ",") {
+				authKeyOpts.Froms = append(authKeyOpts.Froms, strings.TrimSpace(v))
 			}
-		} else if after, ok := strings.CutPrefix(opt, "expiry-time=\""); ok {
-			value := strings.TrimSuffix(after, "\"")
-			t, err := parseTimespec(value)
+		case "expiry-time":
+			t, err := parseTimespec(val)
 			if err != nil {
 				return nil, fmt.Errorf("invalid expiry-time: %w", err)
 			}
 			if authKeyOpts.ExpiryTime == nil || t.Before(*authKeyOpts.ExpiryTime) {
 				authKeyOpts.ExpiryTime = &t
 			}
-		} else if after, ok := strings.CutPrefix(opt, "command=\""); ok {
-			authKeyOpts.Command = strings.ReplaceAll(strings.TrimSuffix(after, "\""), `\"`, `"`)
-		} else if opt == "port-forwarding" {
+		case "command":
+			authKeyOpts.Command = val
+		case "port-forwarding":
 			authKeyOpts.NoPortForwarding = false
-		} else if opt == "no-port-forwarding" {
+		case "no-port-forwarding":
 			authKeyOpts.NoPortForwarding = true
-		} else if opt == "pty" {
+		case "pty":
 			authKeyOpts.NoPty = false
-		} else if opt == "no-pty" {
+		case "no-pty":
 			authKeyOpts.NoPty = true
-		} else if opt == "restrict" {
+		case "restrict":
 			authKeyOpts.NoPortForwarding = true
 			authKeyOpts.NoPty = true
 		}
@@ -183,6 +188,38 @@ func parseAuthorizedKeyOptions(opts []string) (*AuthorizedKeyOptions, error) {
 	}
 
 	return authKeyOpts, nil
+}
+
+func splitOption(opt string) (name, value string, ok bool) {
+	name, quoted, hasValue := strings.Cut(opt, "=")
+	if !hasValue {
+		return name, "", true
+	}
+
+	if len(quoted) < 2 || quoted[0] != '"' {
+		return "", "", false
+	}
+
+	var b strings.Builder
+	for i := 1; i < len(quoted); i++ {
+		switch quoted[i] {
+		case '\\':
+			if i+1 < len(quoted) && quoted[i+1] == '"' {
+				b.WriteByte('"')
+				i++
+			} else {
+				b.WriteByte('\\')
+			}
+		case '"':
+			if i != len(quoted)-1 {
+				return "", "", false // garbage after closing quote
+			}
+			return name, b.String(), true
+		default:
+			b.WriteByte(quoted[i])
+		}
+	}
+	return "", "", false // no closing quote
 }
 
 func parsePermitConnect(permitconnect string) (*PermitConnect, error) {
