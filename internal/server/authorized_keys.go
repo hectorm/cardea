@@ -156,9 +156,16 @@ func parseAuthorizedKeyOptions(opts []string) (*AuthorizedKeyOptions, error) {
 			}
 		} else if after, ok := strings.CutPrefix(opt, "command=\""); ok {
 			authKeyOpts.Command = strings.ReplaceAll(strings.TrimSuffix(after, "\""), `\"`, `"`)
+		} else if opt == "port-forwarding" {
+			authKeyOpts.NoPortForwarding = false
 		} else if opt == "no-port-forwarding" {
 			authKeyOpts.NoPortForwarding = true
+		} else if opt == "pty" {
+			authKeyOpts.NoPty = false
 		} else if opt == "no-pty" {
+			authKeyOpts.NoPty = true
+		} else if opt == "restrict" {
+			authKeyOpts.NoPortForwarding = true
 			authKeyOpts.NoPty = true
 		}
 	}
