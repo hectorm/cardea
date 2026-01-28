@@ -830,6 +830,58 @@ func TestBastionSSHServer(t *testing.T) {
 		}
 	})
 
+	t.Run("restrict", func(t *testing.T) {
+		cli, cliPublicKey, err := setupClient(t)
+		if err != nil {
+			t.Errorf("failed to setup client: %v", err)
+			return
+		}
+		cli.User = fmt.Sprintf("alice@%s", mockAddr)
+		cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
+
+		tests := []struct {
+			name    string
+			options string
+			ptyOk   bool
+		}{
+			{name: "restrict", options: "restrict", ptyOk: false},
+			{name: "restrict_pty", options: "restrict,pty", ptyOk: true},
+		}
+
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`%s,permitconnect="alice@%s" %s`, test.options, mockAddr, cliAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+
+				bastionConn, err := connectToServer(t, cli, bastionSrv)
+				if err != nil {
+					t.Errorf("failed to connect to server: %v", err)
+					return
+				}
+
+				session, err := bastionConn.NewSession()
+				if err != nil {
+					t.Errorf("failed to create session: %v", err)
+					return
+				}
+				defer func() { _ = session.Close() }()
+
+				err = session.RequestPty("xterm", 80, 24, ssh.TerminalModes{})
+				if test.ptyOk && err != nil {
+					t.Errorf("expected pty request to succeed, but it failed: %v", err)
+				} else if !test.ptyOk && err == nil {
+					t.Error("expected pty request to fail, but it succeeded")
+				}
+			})
+		}
+	})
+
 	t.Run("recordings", func(t *testing.T) {
 		cli, cliPublicKey, err := setupClient(t)
 		if err != nil {
@@ -2100,6 +2152,12 @@ func TestBastionSSHServer(t *testing.T) {
 				expiry-time="20991231Z"\
 				,expiry-time="20980101Z" \
 				ALICE_KEY
+
+				# [T52] Restrict
+				restrict,permitconnect="*@restrict.example.com:22" ALICE_KEY
+
+				# [T53] Restrict with pty and port-forwarding overrides
+				restrict,pty,port-forwarding,permitconnect="*@restrict-override.example.com:22" BOB_KEY
 				`, aliceKeyAuth, bobKeyAuth, carolKeyAuth),
 				expected: map[string][]*AuthorizedKeyOptions{
 					aliceKeyStr: {
@@ -2504,6 +2562,19 @@ func TestBastionSSHServer(t *testing.T) {
 							Froms:      []string{"10.0.0.0/8", "172.16.0.0/12"},
 							ExpiryTime: func() *time.Time { t := time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC); return &t }(),
 						},
+						// [T52]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "restrict.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+							NoPortForwarding: true,
+							NoPty:            true,
+						},
 					},
 					bobKeyStr: {
 						// [T2]
@@ -2684,6 +2755,19 @@ func TestBastionSSHServer(t *testing.T) {
 								{Host: "127.0.0.1/8", Port: "1-65535"},
 								{Host: "::1/128", Port: "1-65535"},
 							},
+						},
+						// [T53]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "restrict-override.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "localhost", Port: "1-65535"},
+								{Host: "127.0.0.1/8", Port: "1-65535"},
+								{Host: "::1/128", Port: "1-65535"},
+							},
+							NoPortForwarding: false,
+							NoPty:            false,
 						},
 					},
 					carolKeyStr: {
