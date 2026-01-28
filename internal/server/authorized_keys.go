@@ -312,6 +312,7 @@ const (
 	tokError tokenType = iota
 	tokWhitespace
 	tokNewline
+	tokLineContinuation
 	tokOther
 	tokIdent
 	tokQuoteStart
@@ -383,14 +384,14 @@ func (l *lexer) scanToken() {
 	if c == '\\' {
 		if l.peekAt(1) == '\n' {
 			l.pos += 2
-			l.emit(tokWhitespace, " ")
+			l.emit(tokLineContinuation, "")
 			l.line++
 			l.bol = true
 			return
 		}
 		if l.peekAt(1) == '\r' && l.peekAt(2) == '\n' {
 			l.pos += 3
-			l.emit(tokWhitespace, " ")
+			l.emit(tokLineContinuation, "")
 			l.line++
 			l.bol = true
 			return
@@ -672,6 +673,9 @@ func (p *preprocessor) processToken() {
 		p.handleNewline()
 	case tokDefine:
 		p.handleDefine()
+	case tokLineContinuation:
+		p.advance()
+		p.skipWhitespace()
 	default:
 		p.currentLine = append(p.currentLine, p.advance())
 	}
