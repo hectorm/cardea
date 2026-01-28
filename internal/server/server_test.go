@@ -602,6 +602,112 @@ func TestBastionSSHServer(t *testing.T) {
 		}
 	})
 
+	t.Run("from", func(t *testing.T) {
+		cli, cliPublicKey, err := setupClient(t)
+		if err != nil {
+			t.Errorf("failed to setup client: %v", err)
+			return
+		}
+		cli.User = fmt.Sprintf("alice@%s", mockAddr)
+		cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
+
+		tests := []struct {
+			name    string
+			pattern string
+			ok      bool
+		}{
+			{name: "exact_ipv4", pattern: "127.0.0.1", ok: true},
+			{name: "cidr_ipv4", pattern: "127.0.0.0/8", ok: true},
+			{name: "cidr_ipv4_nomatch", pattern: "192.168.0.0/16", ok: false},
+			{name: "wildcard_ipv4", pattern: "127.0.0.*", ok: true},
+			{name: "wildcard_ipv4_nomatch", pattern: "192.168.0.*", ok: false},
+			{name: "wildcard_any", pattern: "*", ok: true},
+			{name: "multiple_patterns", pattern: "192.168.0.0/16,127.0.0.0/8", ok: true},
+			{name: "negation", pattern: "!127.0.0.1", ok: false},
+			{name: "negation_cidr", pattern: "!127.0.0.0/8", ok: false},
+			{name: "negation_with_allow", pattern: "!192.168.0.0/16,127.0.0.0/8", ok: true},
+			{name: "negation_override", pattern: "127.0.0.0/8,!127.0.0.1", ok: false},
+		}
+
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`from="%s",permitconnect="alice@*:*" %s`, test.pattern, cliAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+
+				_, connErr := connectToServer(t, cli, bastionSrv)
+				if test.ok {
+					if connErr != nil {
+						t.Errorf("expected connection to succeed, but it failed: %v", connErr)
+					}
+				} else {
+					if connErr == nil {
+						t.Error("expected connection to fail, but it succeeded")
+					}
+					if count := bastionSrv.Metrics().AuthFailuresDeniedSourceTotal.Load(); count != 1 {
+						t.Errorf("expected AuthFailuresDeniedSourceTotal=1, got %d", count)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("expiry_time", func(t *testing.T) {
+		cli, cliPublicKey, err := setupClient(t)
+		if err != nil {
+			t.Errorf("failed to setup client: %v", err)
+			return
+		}
+		cli.User = fmt.Sprintf("alice@%s", mockAddr)
+		cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
+
+		tests := []struct {
+			name       string
+			expiryTime string
+			ok         bool
+		}{
+			{name: "future_YYYYMMDDHHMMSS_Z", expiryTime: time.Now().Add(24*time.Hour).UTC().Format("20060102150405") + "Z", ok: true},
+			{name: "future_YYYYMMDDHHMMSS_z", expiryTime: time.Now().Add(24*time.Hour).UTC().Format("20060102150405") + "z", ok: true},
+			{name: "future_YYYYMMDDHHMM_Z", expiryTime: time.Now().Add(24*time.Hour).UTC().Format("200601021504") + "Z", ok: true},
+			{name: "future_YYYYMMDD_Z", expiryTime: time.Now().Add(48*time.Hour).UTC().Format("20060102") + "Z", ok: true},
+			{name: "past_YYYYMMDDHHMMSS_Z", expiryTime: time.Now().Add(-24*time.Hour).UTC().Format("20060102150405") + "Z", ok: false},
+			{name: "past_YYYYMMDDHHMM_Z", expiryTime: time.Now().Add(-24*time.Hour).UTC().Format("200601021504") + "Z", ok: false},
+			{name: "past_YYYYMMDD_Z", expiryTime: time.Now().Add(-48*time.Hour).UTC().Format("20060102") + "Z", ok: false},
+		}
+
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`expiry-time="%s",permitconnect="alice@*:*" %s`, test.expiryTime, cliAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+
+				_, connErr := connectToServer(t, cli, bastionSrv)
+				if test.ok {
+					if connErr != nil {
+						t.Errorf("expected connection to succeed, but it failed: %v", connErr)
+					}
+				} else {
+					if connErr == nil {
+						t.Error("expected connection to fail, but it succeeded")
+					}
+					if count := bastionSrv.Metrics().AuthFailuresExpiredKeyTotal.Load(); count != 1 {
+						t.Errorf("expected AuthFailuresExpiredKeyTotal=1, got %d", count)
+					}
+				}
+			})
+		}
+	})
+
 	t.Run("command", func(t *testing.T) {
 		cli, cliPublicKey, err := setupClient(t)
 		if err != nil {
@@ -3967,6 +4073,67 @@ func TestBastionSSHServer(t *testing.T) {
 				}
 			})
 
+			t.Run("auth_failures_expired_key", func(t *testing.T) {
+				expiredTime := time.Now().Add(-24*time.Hour).UTC().Format("20060102150405") + "Z"
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`expiry-time="%s",permitconnect="alice@*:*" %s`, expiredTime, cliAuthorizedAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+				metrics := bastionSrv.Metrics()
+
+				for range 3 {
+					if bastionConn, err := connectToServer(t, cliAuthorized, bastionSrv); err == nil {
+						_ = bastionConn.Close()
+						t.Error("expected authentication to fail, but it succeeded")
+						return
+					}
+				}
+
+				if err := waitFor(2*time.Second, func() error {
+					if count := metrics.AuthFailuresExpiredKeyTotal.Load(); count != 3 {
+						return fmt.Errorf("expected cardea_auth_failures_total{reason=\"expired_key\"} 3, got %d", count)
+					}
+					return nil
+				}); err != nil {
+					t.Error(err)
+					return
+				}
+			})
+
+			t.Run("auth_failures_denied_source", func(t *testing.T) {
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`from="192.168.0.0/16",permitconnect="alice@*:*" %s`, cliAuthorizedAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+				metrics := bastionSrv.Metrics()
+
+				for range 3 {
+					if bastionConn, err := connectToServer(t, cliAuthorized, bastionSrv); err == nil {
+						_ = bastionConn.Close()
+						t.Error("expected authentication to fail, but it succeeded")
+						return
+					}
+				}
+
+				if err := waitFor(2*time.Second, func() error {
+					if count := metrics.AuthFailuresDeniedSourceTotal.Load(); count != 3 {
+						return fmt.Errorf("expected cardea_auth_failures_total{reason=\"denied_source\"} 3, got %d", count)
+					}
+					return nil
+				}); err != nil {
+					t.Error(err)
+					return
+				}
+			})
+
 			t.Run("auth_failures_denied_backend", func(t *testing.T) {
 				bastionSrv, err := setupBastionServer(t,
 					fmt.Sprintf(`permitconnect="alice@*:*" %s`, cliAuthorizedAuthorizedKeyStr),
@@ -4279,6 +4446,8 @@ func TestBastionSSHServer(t *testing.T) {
 					"cardea_sent_bytes_total",
 					"cardea_auth_successes_total",
 					"cardea_auth_failures_total{reason=\"unknown_key\"}",
+					"cardea_auth_failures_total{reason=\"expired_key\"}",
+					"cardea_auth_failures_total{reason=\"denied_source\"}",
 					"cardea_auth_failures_total{reason=\"denied_backend\"}",
 					"cardea_auth_failures_total{reason=\"invalid_backend\"}",
 					"cardea_rate_limit_rejections_total",

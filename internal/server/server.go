@@ -996,6 +996,9 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 	srv.authKeysMu.RLock()
 	defer srv.authKeysMu.RUnlock()
 
+	user := conn.User()
+	remoteAddr := conn.RemoteAddr()
+	remoteHost, _, _ := net.SplitHostPort(remoteAddr.String())
 	sessionID := hex.EncodeToString(conn.SessionID()[:10])
 	publicKey := srv.marshalAuthorizedKey(key)
 
@@ -1003,20 +1006,20 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 	if !ok {
 		srv.metrics.AuthFailuresUnknownKeyTotal.Add(1)
 		slog.Info("access denied, not in authorized keys list",
-			"backend", conn.User(),
-			"remote_addr", conn.RemoteAddr(),
+			"backend", user,
+			"remote_addr", remoteAddr,
 			"session_id", sessionID,
 			"public_key", publicKey,
 		)
 		return nil, fmt.Errorf("public key not authorized")
 	}
 
-	backend, err := parsePermitConnect(conn.User())
+	backend, err := parsePermitConnect(user)
 	if err != nil {
 		srv.metrics.AuthFailuresInvalidBackendTotal.Add(1)
 		slog.Info("access denied, invalid backend format",
-			"backend", conn.User(),
-			"remote_addr", conn.RemoteAddr(),
+			"backend", user,
+			"remote_addr", remoteAddr,
 			"session_id", sessionID,
 			"public_key", publicKey,
 		)
@@ -1024,28 +1027,69 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 	}
 
 	var authKeyOpts *AuthorizedKeyOptions
+	var denyReason string
+
+	now := time.Now()
 	for _, entry := range authKeyEntries {
-		allowed := false
+		if entry.ExpiryTime != nil && !now.Before(*entry.ExpiryTime) {
+			denyReason = "expired_key"
+			continue
+		}
+
+		if len(entry.Froms) > 0 {
+			fromAllowed := false
+			for _, pattern := range entry.Froms {
+				negated := strings.HasPrefix(pattern, "!")
+				if negated {
+					pattern = pattern[1:]
+				}
+				if srv.matchHostPattern(pattern, remoteHost) {
+					if negated {
+						fromAllowed = false
+						break
+					}
+					fromAllowed = true
+				}
+			}
+			if !fromAllowed {
+				denyReason = "denied_source"
+				continue
+			}
+		}
+
+		backendAllowed := false
 		for _, pattern := range entry.PermitConnects {
 			matchUser := srv.matchUserPattern(pattern.User, backend.User)
 			matchHost := srv.matchHostPattern(pattern.Host, backend.Host)
 			matchPort := srv.matchPortPattern(pattern.Port, backend.Port)
 			if matchUser && matchHost && matchPort {
-				allowed = true
+				backendAllowed = true
 				break
 			}
 		}
-		if allowed {
-			authKeyOpts = entry
-			break
+		if !backendAllowed {
+			denyReason = "denied_backend"
+			continue
 		}
+
+		authKeyOpts = entry
+		break
 	}
 
 	if authKeyOpts == nil {
-		srv.metrics.AuthFailuresDeniedBackendTotal.Add(1)
-		slog.Info("access denied, not in allowed backend list",
-			"backend", conn.User(),
-			"remote_addr", conn.RemoteAddr(),
+		switch denyReason {
+		case "expired_key":
+			srv.metrics.AuthFailuresExpiredKeyTotal.Add(1)
+		case "denied_source":
+			srv.metrics.AuthFailuresDeniedSourceTotal.Add(1)
+		default:
+			srv.metrics.AuthFailuresDeniedBackendTotal.Add(1)
+		}
+
+		slog.Info("access denied",
+			"reason", denyReason,
+			"backend", user,
+			"remote_addr", remoteAddr,
 			"session_id", sessionID,
 			"public_key", publicKey,
 		)
@@ -1060,8 +1104,8 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 
 	srv.metrics.AuthSuccessesTotal.Add(1)
 	slog.Info("access allowed",
-		"backend", conn.User(),
-		"remote_addr", conn.RemoteAddr(),
+		"backend", user,
+		"remote_addr", remoteAddr,
 		"session_id", sessionID,
 		"public_key", publicKey,
 	)

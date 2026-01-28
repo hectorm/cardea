@@ -133,6 +133,14 @@ permitconnect="user1@host1:port1,user2@host2:port2",permitopen="host1:port1,host
   - Supports glob patterns and ranges (e.g., `8000-8999`) for ports.
   - By default, remote port forwarding is disabled.
   - **Example:** `permitlisten="localhost:8080,0.0.0.0:8000-8999"`.
+- **`from`**: comma-separated list of source IP patterns that are allowed to use this key (can be specified multiple times).
+  - Supports glob patterns and CIDR blocks for hosts.
+  - Supports negation with `!` prefix (patterns are evaluated in order, negation overrides previous matches).
+  - **Example:** `from="10.0.0.0/8,!10.0.1.1"`.
+- **`expiry-time`**: timestamp after which the key is no longer valid.
+  - **Format:** `YYYYMMDD[HHMM[SS]][Z]`, where `Z` indicates UTC (local time is used if omitted).
+  - If multiple `expiry-time` options are specified, the earliest one is used.
+  - **Example:** `expiry-time="20251231235959Z"`.
 - **`command`**: force execution of a specific command.
   - **Example:** `command="nologin"`.
 - **`no-pty`**: disable pseudo-terminal allocation.
