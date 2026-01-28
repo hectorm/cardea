@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -24,6 +25,8 @@ type AuthorizedKeyOptions struct {
 	PermitConnects   []PermitConnect `json:"permit_connects"`
 	PermitOpens      []PermitOpen    `json:"permit_opens"`
 	PermitListens    []PermitListen  `json:"permit_listens"`
+	Froms            []string        `json:"froms,omitempty"`
+	ExpiryTime       *time.Time      `json:"expiry_time,omitempty"`
 	Command          string          `json:"command"`
 	NoPortForwarding bool            `json:"no_port_forwarding"`
 	NoPty            bool            `json:"no_pty"`
@@ -138,6 +141,19 @@ func parseAuthorizedKeyOptions(opts []string) (*AuthorizedKeyOptions, error) {
 				}
 				authKeyOpts.PermitListens = append(authKeyOpts.PermitListens, *permitlisten)
 			}
+		} else if after, ok := strings.CutPrefix(opt, "from=\""); ok {
+			for val := range strings.SplitSeq(strings.TrimSuffix(after, "\""), ",") {
+				authKeyOpts.Froms = append(authKeyOpts.Froms, strings.TrimSpace(val))
+			}
+		} else if after, ok := strings.CutPrefix(opt, "expiry-time=\""); ok {
+			value := strings.TrimSuffix(after, "\"")
+			t, err := parseTimespec(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid expiry-time: %w", err)
+			}
+			if authKeyOpts.ExpiryTime == nil || t.Before(*authKeyOpts.ExpiryTime) {
+				authKeyOpts.ExpiryTime = &t
+			}
 		} else if after, ok := strings.CutPrefix(opt, "command=\""); ok {
 			authKeyOpts.Command = strings.ReplaceAll(strings.TrimSuffix(after, "\""), `\"`, `"`)
 		} else if opt == "no-port-forwarding" {
@@ -224,6 +240,70 @@ func parsePermitListen(permitlisten string) (*PermitListen, error) {
 	}
 
 	return nil, fmt.Errorf("invalid permitlisten format, expected <host>:<port>, got %s", permitlisten)
+}
+
+func parseTimespec(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, fmt.Errorf("empty timespec")
+	}
+
+	isUTC := false
+	if strings.HasSuffix(strings.ToUpper(s), "Z") {
+		isUTC = true
+		s = s[:len(s)-1]
+	}
+
+	loc := time.Local
+	if isUTC {
+		loc = time.UTC
+	}
+
+	var year, month, day, hour, minute, second int
+
+	switch len(s) {
+	case 8: // YYYYMMDD
+		n, err := fmt.Sscanf(s, "%04d%02d%02d", &year, &month, &day)
+		if err != nil || n != 3 {
+			return time.Time{}, fmt.Errorf("invalid date format %q", s)
+		}
+	case 12: // YYYYMMDDHHMM
+		n, err := fmt.Sscanf(s, "%04d%02d%02d%02d%02d", &year, &month, &day, &hour, &minute)
+		if err != nil || n != 5 {
+			return time.Time{}, fmt.Errorf("invalid datetime format %q", s)
+		}
+	case 14: // YYYYMMDDHHMMSS
+		n, err := fmt.Sscanf(s, "%04d%02d%02d%02d%02d%02d", &year, &month, &day, &hour, &minute, &second)
+		if err != nil || n != 6 {
+			return time.Time{}, fmt.Errorf("invalid datetime format %q", s)
+		}
+	default:
+		return time.Time{}, fmt.Errorf("invalid timespec length: expected 8, 9, 12, 13, 14, or 15 characters")
+	}
+
+	// Validate ranges
+	if month < 1 || month > 12 {
+		return time.Time{}, fmt.Errorf("invalid month %d", month)
+	}
+	if day < 1 || day > 31 {
+		return time.Time{}, fmt.Errorf("invalid day %d", day)
+	}
+	if hour < 0 || hour > 23 {
+		return time.Time{}, fmt.Errorf("invalid hour %d", hour)
+	}
+	if minute < 0 || minute > 59 {
+		return time.Time{}, fmt.Errorf("invalid minute %d", minute)
+	}
+	if second < 0 || second > 59 {
+		return time.Time{}, fmt.Errorf("invalid second %d", second)
+	}
+
+	// Create time and validate the date is real
+	t := time.Date(year, time.Month(month), day, hour, minute, second, 0, loc)
+	if t.Year() != year || int(t.Month()) != month || t.Day() != day {
+		return time.Time{}, fmt.Errorf("invalid date: %04d-%02d-%02d does not exist", year, month, day)
+	}
+
+	return t, nil
 }
 
 type tokenType int
