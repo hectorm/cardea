@@ -144,7 +144,12 @@ permitconnect="user1@host1:port1,user2@host2:port2",permitopen="host1:port1,host
 - **`command`**: force execution of a specific command.
   - **Example:** `command="nologin"`.
 - **`no-pty`**: disable pseudo-terminal allocation.
+- **`pty`**: enable pseudo-terminal allocation (overrides `restrict` or `no-pty`).
 - **`no-port-forwarding`**: disable both local and remote port forwarding.
+- **`port-forwarding`**: enable port forwarding (overrides `restrict` or `no-port-forwarding`).
+- **`restrict`**: enable all restrictions (equivalent to `no-pty,no-port-forwarding`).
+  - Use with `pty` or `port-forwarding` to selectively re-enable features.
+  - **Example:** `restrict,pty,permitconnect="*@*:22"` (allows PTY but no port forwarding).
 
 #### Extensions
 
