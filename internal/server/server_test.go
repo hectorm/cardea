@@ -2881,6 +2881,61 @@ func TestBastionSSHServer(t *testing.T) {
 				content:  fmt.Sprintf(`permitconnect="*@example.com:22",permitlisten="invalid" %s`, aliceKeyAuth),
 				expected: map[string][]*AuthorizedKeyOptions{},
 			},
+			// Empty expiry-time value
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid expiry-time length
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="2099Z" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid expiry-time month
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="20991301Z" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid expiry-time day
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="20990132Z" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid expiry-time non-existent date
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="20990230Z" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid expiry-time hour
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="209901012500Z" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid expiry-time minute
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="209901010060Z" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid expiry-time second
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="20990101000060Z" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid expiry-time format (non-numeric YYYYMMDD)
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="ABCD0101Z" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid expiry-time format (non-numeric YYYYMMDDHHMM)
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="ABCD01010000Z" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid expiry-time format (non-numeric YYYYMMDDHHMMSS)
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="ABCD0101000000Z" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
 			// Permitconnect value exceeding length limit
 			{
 				content:  fmt.Sprintf(`permitconnect="*@%s:22" %s`, strings.Repeat("a", 1100), aliceKeyAuth),
