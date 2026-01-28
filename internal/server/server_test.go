@@ -2087,6 +2087,19 @@ func TestBastionSSHServer(t *testing.T) {
 				#define T50_SUBTEAM_B BOB_KEY | CAROL_KEY
 				#define T50_TEAM T50_SUBTEAM_A | T50_SUBTEAM_B
 				permitconnect="*@nested-team.example.com:22" T50_TEAM
+
+				# [T51] Multiple declarations of same option type
+				permitconnect="*@multi-decl-1.example.com:22"\
+				,permitconnect="*@multi-decl-2.example.com:22",\
+				permitopen="*:80"\
+				,permitopen="*:443",\
+				permitlisten="localhost:8080"\
+				,permitlisten="localhost:9090",\
+				from="10.0.0.0/8"\
+				,from="172.16.0.0/12",\
+				expiry-time="20991231Z"\
+				,expiry-time="20980101Z" \
+				ALICE_KEY
 				`, aliceKeyAuth, bobKeyAuth, carolKeyAuth),
 				expected: map[string][]*AuthorizedKeyOptions{
 					aliceKeyStr: {
@@ -2473,6 +2486,23 @@ func TestBastionSSHServer(t *testing.T) {
 								{Host: "127.0.0.1/8", Port: "1-65535"},
 								{Host: "::1/128", Port: "1-65535"},
 							},
+						},
+						// [T51]
+						{
+							PermitConnects: []PermitConnect{
+								{User: "*", Host: "multi-decl-1.example.com", Port: "22"},
+								{User: "*", Host: "multi-decl-2.example.com", Port: "22"},
+							},
+							PermitOpens: []PermitOpen{
+								{Host: "*", Port: "80"},
+								{Host: "*", Port: "443"},
+							},
+							PermitListens: []PermitListen{
+								{Host: "localhost", Port: "8080"},
+								{Host: "localhost", Port: "9090"},
+							},
+							Froms:      []string{"10.0.0.0/8", "172.16.0.0/12"},
+							ExpiryTime: func() *time.Time { t := time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC); return &t }(),
 						},
 					},
 					bobKeyStr: {
@@ -3062,6 +3092,24 @@ func TestBastionSSHServer(t *testing.T) {
 							}
 							if opts.NoPty != expectedOpts.NoPty {
 								t.Errorf("expected no-pty %t for key, got %t", expectedOpts.NoPty, opts.NoPty)
+								return
+							}
+							if len(opts.Froms) != len(expectedOpts.Froms) {
+								t.Errorf("expected %d froms for key, got %d", len(expectedOpts.Froms), len(opts.Froms))
+								return
+							}
+							for j, from := range opts.Froms {
+								if from != expectedOpts.Froms[j] {
+									t.Errorf("expected from %q for key, got %q", expectedOpts.Froms[j], from)
+									return
+								}
+							}
+							if (opts.ExpiryTime == nil) != (expectedOpts.ExpiryTime == nil) {
+								t.Errorf("expected expiry-time %v for key, got %v", expectedOpts.ExpiryTime, opts.ExpiryTime)
+								return
+							}
+							if opts.ExpiryTime != nil && expectedOpts.ExpiryTime != nil && !opts.ExpiryTime.Equal(*expectedOpts.ExpiryTime) {
+								t.Errorf("expected expiry-time %v for key, got %v", *expectedOpts.ExpiryTime, *opts.ExpiryTime)
 								return
 							}
 						}
