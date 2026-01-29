@@ -13,12 +13,13 @@ import (
 )
 
 const (
-	maxMacroExpansionDepth = 10
-	maxPermitConnectLength = 1024
-	maxPermitOpenLength    = 512
-	maxPermitListenLength  = 512
-	maxInputSize           = 1024 * 1024 // 1MB
-	maxLineLength          = 64 * 1024   // 64KB
+	maxInputSize            = 1024 * 1024 // 1MB
+	maxLineLength           = 64 * 1024   // 64KB
+	maxPermitConnectLength  = 1024
+	maxPermitOpenLength     = 512
+	maxPermitListenLength   = 512
+	maxMacroExpansionDepth  = 10
+	maxMacroExpansionTokens = 16 * 1024
 )
 
 type AuthorizedKeyOptions struct {
@@ -792,6 +793,9 @@ func (p *preprocessor) expandMacros(tokens []token) ([]token, bool) {
 				if expansion, ok := p.macros[tok.value]; ok {
 					result = append(result, expansion...)
 					changed = true
+					if len(result) > maxMacroExpansionTokens {
+						return nil, false
+					}
 					continue
 				}
 			}
