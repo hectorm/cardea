@@ -63,6 +63,10 @@ func (srv *Server) newAuthorizedKeysDB(path string) (map[string][]*AuthorizedKey
 		return nil, err
 	}
 
+	return parseAuthorizedKeys(content)
+}
+
+func parseAuthorizedKeys(content []byte) (map[string][]*AuthorizedKeyOptions, error) {
 	if len(content) > maxInputSize {
 		return nil, fmt.Errorf("authorized_keys file exceeds maximum size of %d bytes", maxInputSize)
 	}
