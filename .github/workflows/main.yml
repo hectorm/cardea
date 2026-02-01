@@ -58,7 +58,7 @@ jobs:
           jq -e '[.runs[].results] | add | length == 0' ./gosec.sarif >/dev/null
       - name: "Upload SARIF"
         if: always()
-        uses: "github/codeql-action/upload-sarif@19b2f06db2b6f5108140aeb04014ef02b648f789"
+        uses: "github/codeql-action/upload-sarif@b20883b0cd1f46c72ae0ba6d1090936928f9fa30"
         with:
           sarif_file: "./gosec.sarif"
           category: "gosec"
@@ -89,7 +89,7 @@ jobs:
           jq -e '[.runs[].results] | add | length == 0' ./govulncheck.sarif >/dev/null
       - name: "Upload SARIF"
         if: always()
-        uses: "github/codeql-action/upload-sarif@19b2f06db2b6f5108140aeb04014ef02b648f789"
+        uses: "github/codeql-action/upload-sarif@b20883b0cd1f46c72ae0ba6d1090936928f9fa30"
         with:
           sarif_file: "./govulncheck.sarif"
           category: "govulncheck"
@@ -208,7 +208,7 @@ jobs:
             GOARM="${{ matrix.go.GOARM }}"
           file ./dist/* && gzip -nv ./dist/*
       - name: "Generate artifact attestation"
-        uses: "actions/attest-build-provenance@00014ed6ed5efc5b1ab7f7f34a39eb55d41aa4f8"
+        uses: "actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f"
         with:
           subject-path: "./dist/*.gz"
       - name: "Upload artifact"
@@ -240,14 +240,14 @@ jobs:
         uses: "hectorm/ghaction-docker-buildx-setup@fec3efdbb455c2aa58a4fbfd11a9853f5de2cdba"
       - name: "Login to GitHub Container Registry"
         if: "github.event_name != 'pull_request'"
-        uses: "docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef"
+        uses: "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9"
         with:
           registry: "ghcr.io"
           username: "${{ github.actor }}"
           password: "${{ secrets.GITHUB_TOKEN }}"
       - name: "Login to Docker Hub"
         if: "github.event_name != 'pull_request'"
-        uses: "docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef"
+        uses: "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9"
         with:
           registry: "docker.io"
           username: "${{ secrets.DOCKERHUB_USERNAME }}"
@@ -289,14 +289,14 @@ jobs:
             --sbom=true
       - name: "Generate artifact attestation (GHCR)"
         if: "github.event_name != 'pull_request'"
-        uses: "actions/attest-build-provenance@00014ed6ed5efc5b1ab7f7f34a39eb55d41aa4f8"
+        uses: "actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f"
         with:
           subject-name: "ghcr.io/${{ github.repository }}"
           subject-digest: "${{ steps.build-push.outputs.digest }}"
           push-to-registry: "${{ github.event_name != 'pull_request' }}"
       - name: "Generate artifact attestation (Docker Hub)"
         if: "github.event_name != 'pull_request'"
-        uses: "actions/attest-build-provenance@00014ed6ed5efc5b1ab7f7f34a39eb55d41aa4f8"
+        uses: "actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f"
         with:
           subject-name: "index.docker.io/${{ github.repository }}"
           subject-digest: "${{ steps.build-push.outputs.digest }}"
