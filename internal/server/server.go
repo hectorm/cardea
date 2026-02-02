@@ -949,6 +949,48 @@ func (srv *Server) handleTCPIPForward(
 }
 
 func (srv *Server) handleForwardedTCPIP(frontendConn *ssh.ServerConn, newChannel ssh.NewChannel) error {
+	authKeyOptsStr := frontendConn.Permissions.Extensions[sshKeyOptsExt]
+	if authKeyOptsStr == "" {
+		_ = newChannel.Reject(ssh.ConnectionFailed, "internal error")
+		return fmt.Errorf("authorized key options not provided")
+	}
+
+	var authKeyOpts AuthorizedKeyOptions
+	if err := json.Unmarshal([]byte(authKeyOptsStr), &authKeyOpts); err != nil {
+		_ = newChannel.Reject(ssh.ConnectionFailed, "internal error")
+		return err
+	}
+
+	if authKeyOpts.NoPortForwarding {
+		_ = newChannel.Reject(ssh.Prohibited, "port forwarding disabled")
+		return nil
+	}
+
+	var payload struct {
+		ConnectedHost  string
+		ConnectedPort  uint32
+		OriginatorIP   string
+		OriginatorPort uint32
+	}
+	if err := ssh.Unmarshal(newChannel.ExtraData(), &payload); err != nil {
+		_ = newChannel.Reject(ssh.ConnectionFailed, "failed to parse payload")
+		return err
+	}
+
+	allowed := false
+	for _, pl := range authKeyOpts.PermitListens {
+		matchHost := srv.matchHostPattern(pl.Host, payload.ConnectedHost)
+		matchPort := srv.matchPortPattern(pl.Port, payload.ConnectedPort)
+		if matchHost && matchPort {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		_ = newChannel.Reject(ssh.Prohibited, "port forwarding not permitted")
+		return nil
+	}
+
 	clientChannel, clientRequests, err := frontendConn.OpenChannel("forwarded-tcpip", newChannel.ExtraData())
 	if err != nil {
 		_ = newChannel.Reject(ssh.ConnectionFailed, "failed to open channel to client")
