@@ -2,9 +2,13 @@
 
 Cardea is an SSH bastion server with access control, session recording, and optional TPM-backed key protection.
 
+## Scope
+
+Cardea is designed for small and mid-sized teams that manage infrastructure through code. Access rules live in a text file, so they can be reviewed in pull requests and versioned like any other configuration. It can be used as-is or as a building block for a larger system that generates the configuration from an external source of truth. No database or web UI is required.
+
 ## How it works
 
-Clients connect to the bastion encoding the target backend in the SSH username (e.g., `user@backend@bastion`, [see format](#client-connection)). The bastion authenticates the client, verifies access rules, and connects to the backend using its own key. Sessions can optionally be recorded in [asciinema v3](https://www.asciinema.org) format.
+Clients connect using any standard SSH client, encoding the target backend in the SSH username (e.g., `user@backend@bastion`, [see format](#client-connection)). The bastion authenticates the client, verifies access rules, and connects to the backend using its own key. Sessions can optionally be recorded in [asciinema v3](https://www.asciinema.org) format.
 
 ```mermaid
 sequenceDiagram
@@ -28,6 +32,47 @@ sequenceDiagram
 > [!NOTE]
 > The bastion's public key must be added to the backend servers' `authorized_keys`. Use [TPM mode](#tpm-mode) to protect the bastion's private key from extraction.
 > The [`from` option](https://man.openbsd.org/sshd#from=_pattern-list_) can restrict backend access to the bastion's IP.
+
+## Client connection
+
+To connect, clients specify the backend server they wish to access as part of the SSH username. The following formats are supported:
+
+```sh
+# Using @ and : as delimiters
+ssh -p <bastion-port> <user>@<host>[:<port>]@<bastion-host>
+ssh -p <bastion-port> -o User=<user>@<host>[:<port>] <bastion-host>
+
+# Using + as delimiter (to avoid ambiguity with the @ used by SSH)
+ssh -p <bastion-port> <user>+<host>[+<port>]@<bastion-host>
+ssh -p <bastion-port> -o User=<user>+<host>[+<port>] <bastion-host>
+```
+
+### Examples
+
+```sh
+ssh -p 2222 alice@10.0.1.1@cardea.internal
+ssh -p 2222 -o User=alice@10.0.1.1 cardea.internal
+
+ssh -p 2222 alice+10.0.1.1@cardea.internal
+ssh -p 2222 -o User=alice+10.0.1.1 cardea.internal
+
+# Using an SSH config file
+cat >> ~/.ssh/config <<-'EOF'
+Host backend
+    HostName cardea.internal
+    Port 2222
+    User alice@10.0.1.1
+EOF
+ssh backend
+
+# Using sftp
+sftp -P 2222 alice+10.0.1.1@cardea.internal
+sftp -P 2222 -o User=alice@10.0.1.1 cardea.internal
+
+# Using rsync
+rsync -ave 'ssh -p 2222' alice+10.0.1.1@cardea.internal:/remote/dir/ /local/dir/
+rsync -ave 'ssh -p 2222 -o User=alice@10.0.1.1' cardea.internal:/remote/dir/ /local/dir/
+```
 
 ## Installation
 
@@ -246,47 +291,6 @@ Cardea supports `@cert-authority` entries for SSH certificate-based host verific
 ```
 
 Using certificate authorities simplifies host key management in environments with many backend servers, as only the CA public key needs to be distributed rather than individual host keys.
-
-## Client connection
-
-To connect, clients specify the backend server they wish to access as part of the SSH username. The following formats are supported:
-
-```sh
-# Using @ and : as delimiters
-ssh -p <bastion-port> <user>@<host>[:<port>]@<bastion-host>
-ssh -p <bastion-port> -o User=<user>@<host>[:<port>] <bastion-host>
-
-# Using + as delimiter (to avoid ambiguity with the @ used by SSH)
-ssh -p <bastion-port> <user>+<host>[+<port>]@<bastion-host>
-ssh -p <bastion-port> -o User=<user>+<host>[+<port>] <bastion-host>
-```
-
-#### Examples
-
-```sh
-ssh -p 2222 alice@10.0.1.1@cardea.internal
-ssh -p 2222 -o User=alice@10.0.1.1 cardea.internal
-
-ssh -p 2222 alice+10.0.1.1@cardea.internal
-ssh -p 2222 -o User=alice+10.0.1.1 cardea.internal
-
-# Using an SSH config file
-cat >> ~/.ssh/config <<-'EOF'
-Host backend
-    HostName cardea.internal
-    Port 2222
-    User alice@10.0.1.1
-EOF
-ssh backend
-
-# Using sftp
-sftp -P 2222 alice+10.0.1.1@cardea.internal
-sftp -P 2222 -o User=alice@10.0.1.1 cardea.internal
-
-# Using rsync
-rsync -ave 'ssh -p 2222' alice+10.0.1.1@cardea.internal:/remote/dir/ /local/dir/
-rsync -ave 'ssh -p 2222 -o User=alice@10.0.1.1' cardea.internal:/remote/dir/ /local/dir/
-```
 
 ## TPM mode
 
