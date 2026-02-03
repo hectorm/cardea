@@ -16,7 +16,7 @@ func FuzzAuthorizedKeysParse(f *testing.F) {
 	f.Add(`permitconnect="user+host+22" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 
 	f.Add(`permitconnect="user@host:22",permitopen="localhost:8080",from="10.0.0.0/8" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
-	f.Add(`permitconnect="user@host:22",expiry-time="20301231235959Z" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",start-time="20060102150405Z",expiry-time="26660102150405Z" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 	f.Add(`permitconnect="user@host:22",no-pty,no-port-forwarding ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 	f.Add(`restrict,permitconnect="user@host:22" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 
@@ -42,6 +42,8 @@ func FuzzAuthorizedKeysParse(f *testing.F) {
 	f.Add(`permitconnect="@host:22"`)
 	f.Add(`permitconnect="user@host:"`)
 
+	f.Add(`start-time="invalid"`)
+	f.Add(`start-time="99999999"`)
 	f.Add(`expiry-time="invalid"`)
 	f.Add(`expiry-time="99999999"`)
 	f.Add(`from="*" permitconnect="user@host:22"`)
