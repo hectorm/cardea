@@ -182,10 +182,14 @@ permitconnect="user1@host1:port1,user2@host2:port2",permitopen="host1:port1,host
   - Supports glob patterns and CIDR blocks for hosts.
   - Supports negation with `!` prefix (patterns are evaluated in order, negation overrides previous matches).
   - **Example:** `from="10.0.0.0/8,!10.0.1.1"`.
+- **`start-time`**: timestamp before which the key is not yet valid.
+  - **Format:** `YYYYMMDD[HHMM[SS]][Z]`, where `Z` indicates UTC (local time is used if omitted).
+  - If multiple `start-time` options are specified, the one furthest in the future is used.
+  - **Example:** `start-time="20060102150405Z"`.
 - **`expiry-time`**: timestamp after which the key is no longer valid.
   - **Format:** `YYYYMMDD[HHMM[SS]][Z]`, where `Z` indicates UTC (local time is used if omitted).
-  - If multiple `expiry-time` options are specified, the earliest one is used.
-  - **Example:** `expiry-time="20251231235959Z"`.
+  - If multiple `expiry-time` options are specified, the one closest to the present is used.
+  - **Example:** `expiry-time="20060102150405Z"`.
 - **`command`**: force execution of a specific command.
   - **Example:** `command="nologin"`.
 - **`no-pty`**: disable pseudo-terminal allocation.

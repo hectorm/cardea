@@ -27,6 +27,7 @@ type AuthorizedKeyOptions struct {
 	PermitOpens      []PermitOpen    `json:"permit_opens"`
 	PermitListens    []PermitListen  `json:"permit_listens"`
 	Froms            []string        `json:"froms,omitempty"`
+	StartTime        *time.Time      `json:"start_time,omitempty"`
 	ExpiryTime       *time.Time      `json:"expiry_time,omitempty"`
 	Command          string          `json:"command"`
 	NoPortForwarding bool            `json:"no_port_forwarding"`
@@ -155,6 +156,14 @@ func parseOptions(opts []string) (*AuthorizedKeyOptions, error) {
 		case "from":
 			for v := range strings.SplitSeq(val, ",") {
 				authKeyOpts.Froms = append(authKeyOpts.Froms, strings.TrimSpace(v))
+			}
+		case "start-time":
+			t, err := parseTimespec(val)
+			if err != nil {
+				return nil, fmt.Errorf("invalid start-time: %w", err)
+			}
+			if authKeyOpts.StartTime == nil || t.After(*authKeyOpts.StartTime) {
+				authKeyOpts.StartTime = &t
 			}
 		case "expiry-time":
 			t, err := parseTimespec(val)
