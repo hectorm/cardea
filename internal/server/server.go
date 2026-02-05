@@ -1082,7 +1082,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 			continue
 		}
 
-		if entry.ExpiryTime != nil && !now.Before(*entry.ExpiryTime) {
+		if entry.ExpiryTime != nil && now.After(*entry.ExpiryTime) {
 			denyReason = "no_longer_valid"
 			continue
 		}
