@@ -401,6 +401,10 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 						slog.Error("tcpip-forward error", "error", err)
 					}
 				}()
+			case "keepalive@openssh.com":
+				if req.WantReply {
+					_ = req.Reply(false, nil)
+				}
 			default:
 				slog.Debug("unsupported global request type", "type", req.Type)
 				if req.WantReply {
