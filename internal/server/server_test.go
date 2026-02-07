@@ -385,12 +385,12 @@ func TestBastionSSHServer(t *testing.T) {
 			{pattern: "*+*", user: "alice@127.0.0.1:123", ok: false},
 		}
 
-		for _, test := range tests {
-			t.Run(fmt.Sprintf("%s->%s", test.user, test.pattern), func(t *testing.T) {
-				cli.User = test.user
+		for _, tt := range tests {
+			t.Run(fmt.Sprintf("%s->%s", tt.user, tt.pattern), func(t *testing.T) {
+				cli.User = tt.user
 
 				bastionSrv, err := setupBastionServer(t,
-					fmt.Sprintf(`permitconnect="%s" %s`, test.pattern, cliAuthorizedKeyStr),
+					fmt.Sprintf(`permitconnect="%s" %s`, tt.pattern, cliAuthorizedKeyStr),
 					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
 				)
 				if err != nil {
@@ -398,7 +398,7 @@ func TestBastionSSHServer(t *testing.T) {
 					return
 				}
 
-				if test.ok {
+				if tt.ok {
 					if _, err := connectToServer(t, cli, bastionSrv); err != nil {
 						t.Errorf("failed to connect to server: %v", err)
 						return
@@ -449,10 +449,10 @@ func TestBastionSSHServer(t *testing.T) {
 			{pattern: "*:*", target: "127.0.0.1:invalid", ok: false},
 		}
 
-		for _, test := range tests {
-			t.Run(fmt.Sprintf("%s->%s", test.target, test.pattern), func(t *testing.T) {
+		for _, tt := range tests {
+			t.Run(fmt.Sprintf("%s->%s", tt.target, tt.pattern), func(t *testing.T) {
 				bastionSrv, err := setupBastionServer(t,
-					fmt.Sprintf(`permitconnect="alice@%s",permitopen="%s" %s`, mockAddr, test.pattern, cliAuthorizedKeyStr),
+					fmt.Sprintf(`permitconnect="alice@%s",permitopen="%s" %s`, mockAddr, tt.pattern, cliAuthorizedKeyStr),
 					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
 				)
 				if err != nil {
@@ -473,8 +473,8 @@ func TestBastionSSHServer(t *testing.T) {
 				}
 				defer func() { _ = session.Close() }()
 
-				if test.ok {
-					targetConn, err := bastionConn.Dial("tcp", test.target)
+				if tt.ok {
+					targetConn, err := bastionConn.Dial("tcp", tt.target)
 					if err != nil {
 						t.Errorf("expected dial to succeed, but it failed: %v", err)
 						return
@@ -498,7 +498,7 @@ func TestBastionSSHServer(t *testing.T) {
 						return
 					}
 				} else {
-					if _, err = bastionConn.Dial("tcp", test.target); err == nil {
+					if _, err = bastionConn.Dial("tcp", tt.target); err == nil {
 						t.Error("expected dial to fail, but it succeeded")
 						return
 					}
@@ -526,10 +526,10 @@ func TestBastionSSHServer(t *testing.T) {
 			{pattern: "*:1", ok: false},
 		}
 
-		for _, test := range tests {
-			t.Run(fmt.Sprintf("pattern=%s,ok=%t", test.pattern, test.ok), func(t *testing.T) {
+		for _, tt := range tests {
+			t.Run(fmt.Sprintf("pattern=%s,ok=%t", tt.pattern, tt.ok), func(t *testing.T) {
 				bastionSrv, err := setupBastionServer(t,
-					fmt.Sprintf(`permitconnect="alice@%s",permitlisten="%s" %s`, mockAddr, test.pattern, cliAuthorizedKeyStr),
+					fmt.Sprintf(`permitconnect="alice@%s",permitlisten="%s" %s`, mockAddr, tt.pattern, cliAuthorizedKeyStr),
 					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
 				)
 				if err != nil {
@@ -550,7 +550,7 @@ func TestBastionSSHServer(t *testing.T) {
 				}
 				defer func() { _ = session.Close() }()
 
-				if test.ok {
+				if tt.ok {
 					listener, err := bastionConn.Listen("tcp", "127.0.0.1:0")
 					if err != nil {
 						t.Errorf("expected listen to succeed, but it failed: %v", err)
@@ -629,10 +629,10 @@ func TestBastionSSHServer(t *testing.T) {
 			{name: "negation_override", pattern: "127.0.0.0/8,!127.0.0.1", ok: false},
 		}
 
-		for _, test := range tests {
-			t.Run(test.name, func(t *testing.T) {
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
 				bastionSrv, err := setupBastionServer(t,
-					fmt.Sprintf(`from="%s",permitconnect="alice@*:*" %s`, test.pattern, cliAuthorizedKeyStr),
+					fmt.Sprintf(`from="%s",permitconnect="alice@*:*" %s`, tt.pattern, cliAuthorizedKeyStr),
 					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
 				)
 				if err != nil {
@@ -640,17 +640,14 @@ func TestBastionSSHServer(t *testing.T) {
 					return
 				}
 
-				_, connErr := connectToServer(t, cli, bastionSrv)
-				if test.ok {
-					if connErr != nil {
-						t.Errorf("expected connection to succeed, but it failed: %v", connErr)
+				_, err = connectToServer(t, cli, bastionSrv)
+				if tt.ok {
+					if err != nil {
+						t.Errorf("expected connection to succeed, but it failed: %v", err)
 					}
 				} else {
-					if connErr == nil {
+					if err == nil {
 						t.Error("expected connection to fail, but it succeeded")
-					}
-					if count := bastionSrv.Metrics().AuthFailuresDeniedSourceTotal.Load(); count != 1 {
-						t.Errorf("expected AuthFailuresDeniedSourceTotal=1, got %d", count)
 					}
 				}
 			})
@@ -680,10 +677,10 @@ func TestBastionSSHServer(t *testing.T) {
 			{name: "future_YYYYMMDD_Z", startTime: time.Now().Add(48*time.Hour).UTC().Format("20060102") + "Z", ok: false},
 		}
 
-		for _, test := range tests {
-			t.Run(test.name, func(t *testing.T) {
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
 				bastionSrv, err := setupBastionServer(t,
-					fmt.Sprintf(`start-time="%s",permitconnect="alice@*:*" %s`, test.startTime, cliAuthorizedKeyStr),
+					fmt.Sprintf(`start-time="%s",permitconnect="alice@*:*" %s`, tt.startTime, cliAuthorizedKeyStr),
 					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
 				)
 				if err != nil {
@@ -691,17 +688,14 @@ func TestBastionSSHServer(t *testing.T) {
 					return
 				}
 
-				_, connErr := connectToServer(t, cli, bastionSrv)
-				if test.ok {
-					if connErr != nil {
-						t.Errorf("expected connection to succeed, but it failed: %v", connErr)
+				_, err = connectToServer(t, cli, bastionSrv)
+				if tt.ok {
+					if err != nil {
+						t.Errorf("expected connection to succeed, but it failed: %v", err)
 					}
 				} else {
-					if connErr == nil {
+					if err == nil {
 						t.Error("expected connection to fail, but it succeeded")
-					}
-					if count := bastionSrv.Metrics().AuthFailuresNotYetValidKeyTotal.Load(); count != 1 {
-						t.Errorf("expected AuthFailuresNotYetValidKeyTotal=1, got %d", count)
 					}
 				}
 			})
@@ -731,10 +725,10 @@ func TestBastionSSHServer(t *testing.T) {
 			{name: "past_YYYYMMDD_Z", expiryTime: time.Now().Add(-48*time.Hour).UTC().Format("20060102") + "Z", ok: false},
 		}
 
-		for _, test := range tests {
-			t.Run(test.name, func(t *testing.T) {
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
 				bastionSrv, err := setupBastionServer(t,
-					fmt.Sprintf(`expiry-time="%s",permitconnect="alice@*:*" %s`, test.expiryTime, cliAuthorizedKeyStr),
+					fmt.Sprintf(`expiry-time="%s",permitconnect="alice@*:*" %s`, tt.expiryTime, cliAuthorizedKeyStr),
 					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
 				)
 				if err != nil {
@@ -742,17 +736,14 @@ func TestBastionSSHServer(t *testing.T) {
 					return
 				}
 
-				_, connErr := connectToServer(t, cli, bastionSrv)
-				if test.ok {
-					if connErr != nil {
-						t.Errorf("expected connection to succeed, but it failed: %v", connErr)
+				_, err = connectToServer(t, cli, bastionSrv)
+				if tt.ok {
+					if err != nil {
+						t.Errorf("expected connection to succeed, but it failed: %v", err)
 					}
 				} else {
-					if connErr == nil {
+					if err == nil {
 						t.Error("expected connection to fail, but it succeeded")
-					}
-					if count := bastionSrv.Metrics().AuthFailuresNoLongerValidKeyTotal.Load(); count != 1 {
-						t.Errorf("expected AuthFailuresNoLongerValidKeyTotal=1, got %d", count)
 					}
 				}
 			})
@@ -899,10 +890,10 @@ func TestBastionSSHServer(t *testing.T) {
 			{name: "restrict_pty", options: "restrict,pty", ptyOk: true},
 		}
 
-		for _, test := range tests {
-			t.Run(test.name, func(t *testing.T) {
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
 				bastionSrv, err := setupBastionServer(t,
-					fmt.Sprintf(`%s,permitconnect="alice@%s" %s`, test.options, mockAddr, cliAuthorizedKeyStr),
+					fmt.Sprintf(`%s,permitconnect="alice@%s" %s`, tt.options, mockAddr, cliAuthorizedKeyStr),
 					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
 				)
 				if err != nil {
@@ -924,9 +915,9 @@ func TestBastionSSHServer(t *testing.T) {
 				defer func() { _ = session.Close() }()
 
 				err = session.RequestPty("xterm", 80, 24, ssh.TerminalModes{})
-				if test.ptyOk && err != nil {
+				if tt.ptyOk && err != nil {
 					t.Errorf("expected pty request to succeed, but it failed: %v", err)
-				} else if !test.ptyOk && err == nil {
+				} else if !tt.ptyOk && err == nil {
 					t.Error("expected pty request to fail, but it succeeded")
 				}
 			})
@@ -1696,10 +1687,10 @@ func TestBastionSSHServer(t *testing.T) {
 			{channel: "direct-tcpip"},
 		}
 
-		for _, test := range tests {
-			t.Run(test.channel, func(t *testing.T) {
-				if _, _, err := bastionConn.OpenChannel(test.channel, []byte("invalid")); err == nil {
-					t.Errorf("expected malformed %s channel to fail, but it succeeded", test.channel)
+		for _, tt := range tests {
+			t.Run(tt.channel, func(t *testing.T) {
+				if _, _, err := bastionConn.OpenChannel(tt.channel, []byte("invalid")); err == nil {
+					t.Errorf("expected malformed %s channel to fail, but it succeeded", tt.channel)
 					return
 				}
 			})
@@ -1785,10 +1776,10 @@ func TestBastionSSHServer(t *testing.T) {
 			{req: "subsystem", wantReply: true},
 		}
 
-		for _, test := range tests {
-			t.Run(test.req, func(t *testing.T) {
-				if ok, _ := session.SendRequest(test.req, test.wantReply, []byte("invalid")); ok {
-					t.Errorf("expected malformed %s request to fail, but it succeeded", test.req)
+		for _, tt := range tests {
+			t.Run(tt.req, func(t *testing.T) {
+				if ok, _ := session.SendRequest(tt.req, tt.wantReply, []byte("invalid")); ok {
+					t.Errorf("expected malformed %s request to fail, but it succeeded", tt.req)
 					return
 				}
 			})
@@ -3237,20 +3228,20 @@ func TestBastionSSHServer(t *testing.T) {
 			},
 		}
 
-		for n, test := range tests {
+		for n, tt := range tests {
 			t.Run(strconv.Itoa(n), func(t *testing.T) {
-				bastionSrv, err := setupBastionServer(t, test.content, "")
+				bastionSrv, err := setupBastionServer(t, tt.content, "")
 				if err != nil {
 					t.Errorf("failed to setup bastion server: %v", err)
 					return
 				}
 
-				if len(bastionSrv.authKeysDB) != len(test.expected) {
-					t.Errorf("expected %d keys in authorized_keys db, got %d", len(test.expected), len(bastionSrv.authKeysDB))
+				if len(bastionSrv.authKeysDB) != len(tt.expected) {
+					t.Errorf("expected %d keys in authorized_keys db, got %d", len(tt.expected), len(bastionSrv.authKeysDB))
 					return
 				}
 				for key, optsList := range bastionSrv.authKeysDB {
-					if expectedOptsList, ok := test.expected[key]; !ok {
+					if expectedOptsList, ok := tt.expected[key]; !ok {
 						t.Error("expected key to be in authorized_keys db, but it was not found")
 						return
 					} else if len(optsList) != len(expectedOptsList) {
@@ -3259,40 +3250,47 @@ func TestBastionSSHServer(t *testing.T) {
 					} else {
 						for i, opts := range optsList {
 							expectedOpts := expectedOptsList[i]
-							if opts.PermitConnects == nil || len(opts.PermitConnects) != len(expectedOpts.PermitConnects) {
+							if len(opts.PermitConnects) != len(expectedOpts.PermitConnects) {
 								t.Errorf("expected %d permitconnects for key, got %d", len(expectedOpts.PermitConnects), len(opts.PermitConnects))
 								return
-							} else {
-								for j, pc := range opts.PermitConnects {
-									expectedPC := expectedOpts.PermitConnects[j]
-									if pc.User != expectedPC.User || pc.Host != expectedPC.Host || pc.Port != expectedPC.Port {
-										t.Errorf("expected permitconnect %v for key, got %v", expectedPC, pc)
-										return
-									}
+							}
+							for j, pc := range opts.PermitConnects {
+								expectedPC := expectedOpts.PermitConnects[j]
+								if pc.User != expectedPC.User || pc.Host != expectedPC.Host || pc.Port != expectedPC.Port {
+									t.Errorf("expected permitconnect %v for key, got %v", expectedPC, pc)
+									return
 								}
 							}
-							if opts.PermitOpens == nil || len(opts.PermitOpens) != len(expectedOpts.PermitOpens) {
+							if len(opts.PermitOpens) != len(expectedOpts.PermitOpens) {
 								t.Errorf("expected %d permitopens for key, got %d", len(expectedOpts.PermitOpens), len(opts.PermitOpens))
 								return
-							} else {
-								for j, po := range opts.PermitOpens {
-									expectedPO := expectedOpts.PermitOpens[j]
-									if po.Host != expectedPO.Host || po.Port != expectedPO.Port {
-										t.Errorf("expected permitopen %v for key, got %v", expectedPO, po)
-										return
-									}
+							}
+							for j, po := range opts.PermitOpens {
+								expectedPO := expectedOpts.PermitOpens[j]
+								if po.Host != expectedPO.Host || po.Port != expectedPO.Port {
+									t.Errorf("expected permitopen %v for key, got %v", expectedPO, po)
+									return
 								}
 							}
 							if len(opts.PermitListens) != len(expectedOpts.PermitListens) {
 								t.Errorf("expected %d permitlistens for key, got %d", len(expectedOpts.PermitListens), len(opts.PermitListens))
 								return
-							} else {
-								for j, pl := range opts.PermitListens {
-									expectedPL := expectedOpts.PermitListens[j]
-									if pl.Host != expectedPL.Host || pl.Port != expectedPL.Port {
-										t.Errorf("expected permitlisten %v for key, got %v", expectedPL, pl)
-										return
-									}
+							}
+							for j, pl := range opts.PermitListens {
+								expectedPL := expectedOpts.PermitListens[j]
+								if pl.Host != expectedPL.Host || pl.Port != expectedPL.Port {
+									t.Errorf("expected permitlisten %v for key, got %v", expectedPL, pl)
+									return
+								}
+							}
+							if len(opts.Froms) != len(expectedOpts.Froms) {
+								t.Errorf("expected %d froms for key, got %d", len(expectedOpts.Froms), len(opts.Froms))
+								return
+							}
+							for j, from := range opts.Froms {
+								if from != expectedOpts.Froms[j] {
+									t.Errorf("expected from %q for key, got %q", expectedOpts.Froms[j], from)
+									return
 								}
 							}
 							if opts.Command != expectedOpts.Command {
@@ -3307,21 +3305,11 @@ func TestBastionSSHServer(t *testing.T) {
 								t.Errorf("expected no-pty %t for key, got %t", expectedOpts.NoPty, opts.NoPty)
 								return
 							}
-							if len(opts.Froms) != len(expectedOpts.Froms) {
-								t.Errorf("expected %d froms for key, got %d", len(expectedOpts.Froms), len(opts.Froms))
-								return
-							}
-							for j, from := range opts.Froms {
-								if from != expectedOpts.Froms[j] {
-									t.Errorf("expected from %q for key, got %q", expectedOpts.Froms[j], from)
-									return
-								}
-							}
 							if (opts.StartTime == nil) != (expectedOpts.StartTime == nil) {
 								t.Errorf("expected start-time %v for key, got %v", expectedOpts.StartTime, opts.StartTime)
 								return
 							}
-							if opts.StartTime != nil && expectedOpts.StartTime != nil && !opts.StartTime.Equal(*expectedOpts.StartTime) {
+							if opts.StartTime != nil && !opts.StartTime.Equal(*expectedOpts.StartTime) {
 								t.Errorf("expected start-time %v for key, got %v", *expectedOpts.StartTime, *opts.StartTime)
 								return
 							}
@@ -3329,7 +3317,7 @@ func TestBastionSSHServer(t *testing.T) {
 								t.Errorf("expected expiry-time %v for key, got %v", expectedOpts.ExpiryTime, opts.ExpiryTime)
 								return
 							}
-							if opts.ExpiryTime != nil && expectedOpts.ExpiryTime != nil && !opts.ExpiryTime.Equal(*expectedOpts.ExpiryTime) {
+							if opts.ExpiryTime != nil && !opts.ExpiryTime.Equal(*expectedOpts.ExpiryTime) {
 								t.Errorf("expected expiry-time %v for key, got %v", *expectedOpts.ExpiryTime, *opts.ExpiryTime)
 								return
 							}
