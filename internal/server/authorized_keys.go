@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/hectorm/cardea/internal/timewindow"
 )
 
 const (
@@ -23,15 +25,16 @@ const (
 )
 
 type AuthorizedKeyOptions struct {
-	PermitConnects   []PermitConnect `json:"permit_connects"`
-	PermitOpens      []PermitOpen    `json:"permit_opens"`
-	PermitListens    []PermitListen  `json:"permit_listens"`
-	Froms            []string        `json:"froms,omitempty"`
-	StartTime        *time.Time      `json:"start_time,omitempty"`
-	ExpiryTime       *time.Time      `json:"expiry_time,omitempty"`
-	Command          string          `json:"command"`
-	NoPortForwarding bool            `json:"no_port_forwarding"`
-	NoPty            bool            `json:"no_pty"`
+	PermitConnects   []PermitConnect        `json:"permit_connects"`
+	PermitOpens      []PermitOpen           `json:"permit_opens"`
+	PermitListens    []PermitListen         `json:"permit_listens"`
+	Froms            []string               `json:"froms"`
+	StartTime        *time.Time             `json:"start_time"`
+	ExpiryTime       *time.Time             `json:"expiry_time"`
+	TimeWindow       *timewindow.TimeWindow `json:"time_window"`
+	Command          string                 `json:"command"`
+	NoPortForwarding bool                   `json:"no_port_forwarding"`
+	NoPty            bool                   `json:"no_pty"`
 }
 
 type PermitConnect struct {
@@ -172,6 +175,16 @@ func parseOptions(opts []string) (*AuthorizedKeyOptions, error) {
 			}
 			if authKeyOpts.ExpiryTime == nil || t.Before(*authKeyOpts.ExpiryTime) {
 				authKeyOpts.ExpiryTime = &t
+			}
+		case "time-window":
+			tw, err := timewindow.Parse(val)
+			if err != nil {
+				return nil, fmt.Errorf("invalid time-window: %w", err)
+			}
+			if authKeyOpts.TimeWindow != nil {
+				authKeyOpts.TimeWindow.Windows = append(authKeyOpts.TimeWindow.Windows, tw.Windows...)
+			} else {
+				authKeyOpts.TimeWindow = tw
 			}
 		case "command":
 			authKeyOpts.Command = val

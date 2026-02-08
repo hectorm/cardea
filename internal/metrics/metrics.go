@@ -26,8 +26,9 @@ type Metrics struct {
 	SentBytesTotal                      atomic.Uint64
 	AuthSuccessesTotal                  atomic.Uint64
 	AuthFailuresUnknownKeyTotal         atomic.Uint64
-	AuthFailuresNotYetValidKeyTotal     atomic.Uint64
-	AuthFailuresNoLongerValidKeyTotal   atomic.Uint64
+	AuthFailuresDeniedStartTimeTotal    atomic.Uint64
+	AuthFailuresDeniedExpiryTimeTotal   atomic.Uint64
+	AuthFailuresDeniedTimeWindowTotal   atomic.Uint64
 	AuthFailuresDeniedSourceTotal       atomic.Uint64
 	AuthFailuresDeniedBackendTotal      atomic.Uint64
 	AuthFailuresInvalidBackendTotal     atomic.Uint64
@@ -220,8 +221,9 @@ func (m *Metrics) writeCardeaMetrics(ew *errWriter) {
 	ew.printf("# TYPE cardea_auth_failures_total counter\n")
 	ew.printf("# HELP cardea_auth_failures_total Total number of failed authentications.\n")
 	ew.printf("cardea_auth_failures_total{reason=\"unknown_key\"} %d\n", m.AuthFailuresUnknownKeyTotal.Load())
-	ew.printf("cardea_auth_failures_total{reason=\"not_yet_valid\"} %d\n", m.AuthFailuresNotYetValidKeyTotal.Load())
-	ew.printf("cardea_auth_failures_total{reason=\"no_longer_valid\"} %d\n", m.AuthFailuresNoLongerValidKeyTotal.Load())
+	ew.printf("cardea_auth_failures_total{reason=\"denied_start_time\"} %d\n", m.AuthFailuresDeniedStartTimeTotal.Load())
+	ew.printf("cardea_auth_failures_total{reason=\"denied_expiry_time\"} %d\n", m.AuthFailuresDeniedExpiryTimeTotal.Load())
+	ew.printf("cardea_auth_failures_total{reason=\"denied_time_window\"} %d\n", m.AuthFailuresDeniedTimeWindowTotal.Load())
 	ew.printf("cardea_auth_failures_total{reason=\"denied_source\"} %d\n", m.AuthFailuresDeniedSourceTotal.Load())
 	ew.printf("cardea_auth_failures_total{reason=\"denied_backend\"} %d\n", m.AuthFailuresDeniedBackendTotal.Load())
 	ew.printf("cardea_auth_failures_total{reason=\"invalid_backend\"} %d\n", m.AuthFailuresInvalidBackendTotal.Load())
