@@ -1078,12 +1078,17 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 	now := time.Now()
 	for _, entry := range authKeyEntries {
 		if entry.StartTime != nil && now.Before(*entry.StartTime) {
-			denyReason = "not_yet_valid"
+			denyReason = "denied_start_time"
 			continue
 		}
 
 		if entry.ExpiryTime != nil && now.After(*entry.ExpiryTime) {
-			denyReason = "no_longer_valid"
+			denyReason = "denied_expiry_time"
+			continue
+		}
+
+		if entry.TimeWindow != nil && !entry.TimeWindow.Contains(now) {
+			denyReason = "denied_time_window"
 			continue
 		}
 
@@ -1129,10 +1134,12 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 
 	if authKeyOpts == nil {
 		switch denyReason {
-		case "not_yet_valid":
-			srv.metrics.AuthFailuresNotYetValidKeyTotal.Add(1)
-		case "no_longer_valid":
-			srv.metrics.AuthFailuresNoLongerValidKeyTotal.Add(1)
+		case "denied_start_time":
+			srv.metrics.AuthFailuresDeniedStartTimeTotal.Add(1)
+		case "denied_expiry_time":
+			srv.metrics.AuthFailuresDeniedExpiryTimeTotal.Add(1)
+		case "denied_time_window":
+			srv.metrics.AuthFailuresDeniedTimeWindowTotal.Add(1)
 		case "denied_source":
 			srv.metrics.AuthFailuresDeniedSourceTotal.Add(1)
 		default:
