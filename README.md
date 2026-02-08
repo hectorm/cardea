@@ -190,6 +190,16 @@ permitconnect="user1@host1:port1,user2@host2:port2",permitopen="host1:port1,host
   - **Format:** `YYYYMMDD[HHMM[SS]][Z]`, where `Z` indicates UTC (local time is used if omitted).
   - If multiple `expiry-time` options are specified, the one closest to the present is used.
   - **Example:** `expiry-time="20060102150405Z"`.
+- **`time-window`**: recurring time-based access control window (can be specified multiple times).
+  - **Format:** `<window>[,<window>...]`, where each window is a set of space-separated constraints (AND logic) and multiple windows are comma-separated (OR logic).
+  - **Constraint types:** `dow` (day of week, 0–6 or sun–sat), `month` (1–12 or jan–dec), `day` (1–31), `hour` (0–23), `min` (0–59), `sec` (0–59), `tz` (IANA timezone).
+  - Constraints support single values (e.g., `hour:8`), inclusive ranges (e.g., `hour:8-17`), and multiple disjoint ranges with `/` (e.g., `hour:8-13/15-17`).
+  - Omitted constraint types match any value (e.g., `hour:8-17` matches hours 8–17 on any day).
+  - Wrap-around ranges are not supported (e.g., `dow:fri-mon` is invalid; use `dow:fri-sun/mon` instead).
+  - If `tz:` is omitted, system local time is used. Each window in a comma-separated list can have its own `tz:` value.
+  - If multiple `time-window` options are specified, windows are accumulated (OR logic).
+  - **Example:** `time-window="dow:mon-fri hour:8-17 tz:Europe/Madrid"`.
+  - **Example:** `time-window="dow:mon-thu hour:8-17 tz:Europe/Madrid,dow:fri hour:8-14 tz:Europe/Madrid"`.
 - **`command`**: force execution of a specific command.
   - **Example:** `command="nologin"`.
 - **`no-pty`**: disable pseudo-terminal allocation.
@@ -241,6 +251,7 @@ The format supports comments, directives, line continuation, and pipe expansion:
 #define ALL_SERVERS NON_PROD_SERVERS,PROD_SERVERS
 
 # === Option templates ===
+#define WORKING_HOURS dow:mon-fri hour:8-17 tz:Europe/Madrid
 #define SFTP_OPTS command="internal-sftp",no-pty
 
 # === Access rules ===
@@ -249,7 +260,8 @@ The format supports comments, directives, line continuation, and pipe expansion:
 permitconnect="ALL_SERVERS",permitopen="*:*" SRE_TEAM
 
 # Developers: non-production environments only
-permitconnect="NON_PROD_SERVERS" DEV_TEAM
+permitconnect="DEV_SERVERS" DEV_TEAM
+permitconnect="STAGING_SERVERS",time-window="WORKING_HOURS" DEV_TEAM
 
 # CI/CD: SFTP-only deploy to production
 permitconnect="PROD_SERVERS",SFTP_OPTS CI_KEY

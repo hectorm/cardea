@@ -19,6 +19,9 @@ func FuzzAuthorizedKeysParse(f *testing.F) {
 	// Option combinations
 	f.Add(`permitconnect="user@host:22",permitopen="localhost:8080",permitlisten="localhost:9090",from="10.0.0.0/8" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 	f.Add(`permitconnect="user@host:22",start-time="20060102150405Z",expiry-time="26660102150405Z" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",time-window="dow:mon-fri hour:8-17 tz:Europe/Madrid" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",time-window="dow:mon-thu hour:8-17 tz:Europe/Madrid",time-window="dow:fri hour:8-14 tz:Europe/Madrid" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",time-window="hour:8-13/15-17 tz:Europe/Madrid" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 	f.Add(`permitconnect="user@host:22",no-pty,no-port-forwarding ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 	f.Add(`restrict,permitconnect="user@host:22" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 
@@ -49,6 +52,13 @@ func FuzzAuthorizedKeysParse(f *testing.F) {
 	f.Add(`start-time="99999999"`)
 	f.Add(`expiry-time="invalid"`)
 	f.Add(`expiry-time="99999999"`)
+
+	// Malformed time-window
+	f.Add(`time-window="",permitconnect="user@host:22"`)
+	f.Add(`time-window="invalid",permitconnect="user@host:22"`)
+	f.Add(`time-window="tz:Invalid/Zone",permitconnect="user@host:22"`)
+	f.Add(`time-window="dow:fri-mon",permitconnect="user@host:22"`)
+	f.Add(`time-window="hour:25",permitconnect="user@host:22"`)
 
 	// Malformed key
 	f.Add("permitconnect=\"user@host:22\" not-a-valid-key")

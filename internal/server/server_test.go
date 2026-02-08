@@ -8,6 +8,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -27,6 +28,7 @@ import (
 	"github.com/hectorm/cardea/internal/config"
 	"github.com/hectorm/cardea/internal/health"
 	"github.com/hectorm/cardea/internal/server/mock"
+	"github.com/hectorm/cardea/internal/timewindow"
 	"github.com/hectorm/cardea/internal/utils/disk"
 )
 
@@ -729,6 +731,55 @@ func TestBastionSSHServer(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				bastionSrv, err := setupBastionServer(t,
 					fmt.Sprintf(`expiry-time="%s",permitconnect="alice@*:*" %s`, tt.expiryTime, cliAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+
+				_, err = connectToServer(t, cli, bastionSrv)
+				if tt.ok {
+					if err != nil {
+						t.Errorf("expected connection to succeed, but it failed: %v", err)
+					}
+				} else {
+					if err == nil {
+						t.Error("expected connection to fail, but it succeeded")
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("time_window", func(t *testing.T) {
+		cli, cliPublicKey, err := setupClient(t)
+		if err != nil {
+			t.Errorf("failed to setup client: %v", err)
+			return
+		}
+		cli.User = fmt.Sprintf("alice@%s", mockAddr)
+		cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
+
+		now := time.Now()
+		currentDOW := strings.ToLower(now.Weekday().String()[:3])
+		currentHour := now.Hour()
+		excludedHour := (currentHour + 12) % 24
+
+		tests := []struct {
+			name       string
+			timeWindow string
+			ok         bool
+		}{
+			{name: "current_time_matches", timeWindow: fmt.Sprintf("dow:%s hour:%d", currentDOW, currentHour), ok: true},
+			{name: "current_time_no_match", timeWindow: fmt.Sprintf("hour:%d", excludedHour), ok: false},
+			{name: "tz_only_matches_all", timeWindow: "tz:UTC", ok: true},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`time-window="%s",permitconnect="alice@*:*" %s`, tt.timeWindow, cliAuthorizedKeyStr),
 					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
 				)
 				if err != nil {
@@ -2191,10 +2242,12 @@ func TestBastionSSHServer(t *testing.T) {
 				,permitlisten="localhost:9090",\
 				from="10.0.0.0/8"\
 				,from="172.16.0.0/12",\
-				start-time="20200101Z"\
-				,start-time="20210101Z",\
-				expiry-time="20991231Z"\
-				,expiry-time="20980101Z" \
+				start-time="20060101Z"\
+				,start-time="20060102Z",\
+				expiry-time="20060101Z"\
+				,expiry-time="20060102Z",\
+				time-window="dow:mon-thu hour:8-17 tz:Europe/Madrid"\
+				,time-window="dow:fri hour:8-14 tz:Europe/Madrid" \
 				ALICE_KEY
 
 				# [T52] Restrict
@@ -2604,8 +2657,12 @@ func TestBastionSSHServer(t *testing.T) {
 								{Host: "localhost", Port: "9090"},
 							},
 							Froms:      []string{"10.0.0.0/8", "172.16.0.0/12"},
-							StartTime:  func() *time.Time { t := time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC); return &t }(),
-							ExpiryTime: func() *time.Time { t := time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC); return &t }(),
+							StartTime:  func() *time.Time { t := time.Date(2006, 1, 2, 0, 0, 0, 0, time.UTC); return &t }(),
+							ExpiryTime: func() *time.Time { t := time.Date(2006, 1, 1, 0, 0, 0, 0, time.UTC); return &t }(),
+							TimeWindow: func() *timewindow.TimeWindow {
+								tw, _ := timewindow.Parse("dow:mon-thu hour:8-17 tz:Europe/Madrid,dow:fri hour:8-14 tz:Europe/Madrid")
+								return tw
+							}(),
 						},
 						// [T52]
 						{
@@ -3085,6 +3142,96 @@ func TestBastionSSHServer(t *testing.T) {
 				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="ABCD0101000000Z" %s`, aliceKeyAuth),
 				expected: map[string][]*AuthorizedKeyOptions{},
 			},
+			// Empty time-window
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Whitespace-only time-window
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="   " %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid time-window unknown constraint type
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="foo:bar" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid time-window missing value
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid time-window missing colon
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="dow" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid time-window out-of-range hour
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:25" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid time-window out-of-range dow
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="dow:7" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid time-window out-of-range month
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="month:0" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid time-window wrap-around range
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="dow:fri-mon" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid time-window wrap-around hour
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:22-6" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid time-window timezone
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="tz:Invalid/Zone" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid time-window duplicate constraint
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:9 hour:10" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid time-window leading comma
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window=",dow:mon" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid time-window trailing comma
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="dow:mon," %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid time-window double comma
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="dow:mon,,dow:tue" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid time-window negative number
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:-1" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid time-window non-integer
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:9.5" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Invalid time-window overflow
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:999999999999" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
 			// Permitconnect value exceeding length limit
 			{
 				content:  fmt.Sprintf(`permitconnect="*@%s:22" %s`, strings.Repeat("a", 1100), aliceKeyAuth),
@@ -3320,6 +3467,26 @@ func TestBastionSSHServer(t *testing.T) {
 							if opts.ExpiryTime != nil && !opts.ExpiryTime.Equal(*expectedOpts.ExpiryTime) {
 								t.Errorf("expected expiry-time %v for key, got %v", *expectedOpts.ExpiryTime, *opts.ExpiryTime)
 								return
+							}
+							if (opts.TimeWindow == nil) != (expectedOpts.TimeWindow == nil) {
+								t.Errorf("expected time-window %v for key, got %v", expectedOpts.TimeWindow, opts.TimeWindow)
+								return
+							}
+							if opts.TimeWindow != nil {
+								got, err := json.Marshal(opts.TimeWindow)
+								if err != nil {
+									t.Errorf("failed to marshal time-window: %v", err)
+									return
+								}
+								expected, err := json.Marshal(expectedOpts.TimeWindow)
+								if err != nil {
+									t.Errorf("failed to marshal expected time-window: %v", err)
+									return
+								}
+								if string(got) != string(expected) {
+									t.Errorf("expected time-window %s for key, got %s", expected, got)
+									return
+								}
 							}
 						}
 					}
@@ -4330,7 +4497,7 @@ func TestBastionSSHServer(t *testing.T) {
 				}
 			})
 
-			t.Run("auth_failures_not_yet_valid", func(t *testing.T) {
+			t.Run("auth_failures_denied_start_time", func(t *testing.T) {
 				futureTime := time.Now().Add(24*time.Hour).UTC().Format("20060102150405") + "Z"
 				bastionSrv, err := setupBastionServer(t,
 					fmt.Sprintf(`start-time="%s",permitconnect="alice@*:*" %s`, futureTime, cliAuthorizedAuthorizedKeyStr),
@@ -4351,8 +4518,8 @@ func TestBastionSSHServer(t *testing.T) {
 				}
 
 				if err := waitFor(2*time.Second, func() error {
-					if count := metrics.AuthFailuresNotYetValidKeyTotal.Load(); count != 3 {
-						return fmt.Errorf("expected cardea_auth_failures_total{reason=\"not_yet_valid\"} 3, got %d", count)
+					if count := metrics.AuthFailuresDeniedStartTimeTotal.Load(); count != 3 {
+						return fmt.Errorf("expected cardea_auth_failures_total{reason=\"denied_start_time\"} 3, got %d", count)
 					}
 					return nil
 				}); err != nil {
@@ -4361,7 +4528,7 @@ func TestBastionSSHServer(t *testing.T) {
 				}
 			})
 
-			t.Run("auth_failures_no_longer_valid", func(t *testing.T) {
+			t.Run("auth_failures_denied_expiry_time", func(t *testing.T) {
 				expiredTime := time.Now().Add(-24*time.Hour).UTC().Format("20060102150405") + "Z"
 				bastionSrv, err := setupBastionServer(t,
 					fmt.Sprintf(`expiry-time="%s",permitconnect="alice@*:*" %s`, expiredTime, cliAuthorizedAuthorizedKeyStr),
@@ -4382,8 +4549,39 @@ func TestBastionSSHServer(t *testing.T) {
 				}
 
 				if err := waitFor(2*time.Second, func() error {
-					if count := metrics.AuthFailuresNoLongerValidKeyTotal.Load(); count != 3 {
-						return fmt.Errorf("expected cardea_auth_failures_total{reason=\"no_longer_valid\"} 3, got %d", count)
+					if count := metrics.AuthFailuresDeniedExpiryTimeTotal.Load(); count != 3 {
+						return fmt.Errorf("expected cardea_auth_failures_total{reason=\"denied_expiry_time\"} 3, got %d", count)
+					}
+					return nil
+				}); err != nil {
+					t.Error(err)
+					return
+				}
+			})
+
+			t.Run("auth_failures_denied_time_window", func(t *testing.T) {
+				excludedHour := (time.Now().Hour() + 12) % 24
+				bastionSrv, err := setupBastionServer(t,
+					fmt.Sprintf(`time-window="hour:%d",permitconnect="alice@*:*" %s`, excludedHour, cliAuthorizedAuthorizedKeyStr),
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+				metrics := bastionSrv.Metrics()
+
+				for range 3 {
+					if bastionConn, err := connectToServer(t, cliAuthorized, bastionSrv); err == nil {
+						_ = bastionConn.Close()
+						t.Error("expected authentication to fail, but it succeeded")
+						return
+					}
+				}
+
+				if err := waitFor(2*time.Second, func() error {
+					if count := metrics.AuthFailuresDeniedTimeWindowTotal.Load(); count != 3 {
+						return fmt.Errorf("expected cardea_auth_failures_total{reason=\"denied_time_window\"} 3, got %d", count)
 					}
 					return nil
 				}); err != nil {
@@ -4734,8 +4932,8 @@ func TestBastionSSHServer(t *testing.T) {
 					"cardea_sent_bytes_total",
 					"cardea_auth_successes_total",
 					"cardea_auth_failures_total{reason=\"unknown_key\"}",
-					"cardea_auth_failures_total{reason=\"not_yet_valid\"}",
-					"cardea_auth_failures_total{reason=\"no_longer_valid\"}",
+					"cardea_auth_failures_total{reason=\"denied_start_time\"}",
+					"cardea_auth_failures_total{reason=\"denied_expiry_time\"}",
 					"cardea_auth_failures_total{reason=\"denied_source\"}",
 					"cardea_auth_failures_total{reason=\"denied_backend\"}",
 					"cardea_auth_failures_total{reason=\"invalid_backend\"}",
