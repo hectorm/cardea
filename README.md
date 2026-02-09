@@ -209,6 +209,8 @@ permitconnect="user1@host1:port1,user2@host2:port2",permitopen="host1:port1,host
 - **`restrict`**: enable all restrictions (equivalent to `no-pty,no-port-forwarding`).
   - Use with `pty` or `port-forwarding` to selectively re-enable features.
   - **Example:** `restrict,pty,permitconnect="*@*:22"` (allows PTY but no port forwarding).
+- **`no-recording`**: disable session recording for this key.
+- **`recording`**: enable session recording (overrides `no-recording`).
 
 #### Extensions
 

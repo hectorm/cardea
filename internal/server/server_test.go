@@ -1271,6 +1271,67 @@ func TestBastionSSHServer(t *testing.T) {
 				return
 			}
 		})
+
+		t.Run("no_recording_option", func(t *testing.T) {
+			tests := []struct {
+				name          string
+				options       string
+				expectRecords int
+			}{
+				{name: "no_recording", options: "no-recording", expectRecords: 0},
+				{name: "recording_overrides", options: "no-recording,recording", expectRecords: 1},
+			}
+
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					recordingsDir := t.TempDir()
+					bastionSrv, err := setupBastionServer(t,
+						fmt.Sprintf(`permitconnect="alice@%s",%s %s`, mockAddr, tt.options, cliAuthorizedKeyStr),
+						fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+						func(srv *Server) error {
+							srv.config.RecordingsDir = recordingsDir
+							return nil
+						},
+					)
+					if err != nil {
+						t.Errorf("failed to setup bastion server: %v", err)
+						return
+					}
+
+					bastionConn, err := connectToServer(t, cli, bastionSrv)
+					if err != nil {
+						t.Errorf("failed to connect to server: %v", err)
+						return
+					}
+
+					session, err := bastionConn.NewSession()
+					if err != nil {
+						t.Errorf("failed to create session: %v", err)
+						return
+					}
+					defer func() { _ = session.Close() }()
+
+					if _, err := session.Output("echo Hello, World!"); err != nil {
+						t.Errorf("failed to execute command: %v", err)
+						return
+					}
+
+					if err := waitFor(2*time.Second, func() error {
+						files, err := filepath.Glob(filepath.Join(recordingsDir, "*.cast.gz"))
+						if err != nil {
+							return fmt.Errorf("failed to glob for recordings: %w", err)
+						}
+						if len(files) != tt.expectRecords {
+							return fmt.Errorf("expected %d recording(s), got %d", tt.expectRecords, len(files))
+						}
+						return nil
+					}); err != nil {
+						t.Error(err)
+						return
+					}
+				})
+			}
+		})
 	})
 
 	t.Run("recordings_rotation_percentage", func(t *testing.T) {
