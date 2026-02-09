@@ -379,6 +379,16 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 	}
 	defer func() { _ = frontendConn.Close() }()
 
+	authKeyOptsStr := frontendConn.Permissions.Extensions[sshKeyOptsExt]
+	if authKeyOptsStr == "" {
+		return fmt.Errorf("authorized key options not provided")
+	}
+
+	var authKeyOpts AuthorizedKeyOptions
+	if err := json.Unmarshal([]byte(authKeyOptsStr), &authKeyOpts); err != nil {
+		return err
+	}
+
 	permitconnect, err := parsePermitConnect(frontendConn.User())
 	if err != nil {
 		return err
@@ -396,7 +406,7 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 			switch req.Type {
 			case "tcpip-forward", "cancel-tcpip-forward":
 				go func() {
-					if err := srv.handleTCPIPForward(req, frontendConn, backendConn); err != nil {
+					if err := srv.handleTCPIPForward(backendConn, &authKeyOpts, req); err != nil {
 						slog.Error("tcpip-forward error", "error", err)
 					}
 				}()
@@ -419,13 +429,13 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 			switch newChannel.ChannelType() {
 			case "session":
 				go func() {
-					if err := srv.handleSession(frontendConn, backendConn, newChannel); err != nil {
+					if err := srv.handleSession(frontendConn, backendConn, &authKeyOpts, newChannel); err != nil {
 						slog.Error("session error", "error", err)
 					}
 				}()
 			case "direct-tcpip":
 				go func() {
-					if err := srv.handleDirectTCPIP(frontendConn, backendConn, newChannel); err != nil {
+					if err := srv.handleDirectTCPIP(backendConn, &authKeyOpts, newChannel); err != nil {
 						slog.Error("direct-tcpip error", "error", err)
 					}
 				}()
@@ -440,7 +450,7 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 	go func() {
 		for newChannel := range backendConn.HandleChannelOpen("forwarded-tcpip") {
 			go func() {
-				if err := srv.handleForwardedTCPIP(frontendConn, newChannel); err != nil {
+				if err := srv.handleForwardedTCPIP(frontendConn, &authKeyOpts, newChannel); err != nil {
 					slog.Error("forwarded-tcpip error", "error", err)
 				}
 			}()
@@ -452,7 +462,7 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 	return nil
 }
 
-func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.Client, newChannel ssh.NewChannel) error {
+func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.Client, authKeyOpts *AuthorizedKeyOptions, newChannel ssh.NewChannel) error {
 	backendSession, err := backendConn.NewSession()
 	if err != nil {
 		_ = newChannel.Reject(ssh.ConnectionFailed, "internal error")
@@ -472,7 +482,7 @@ func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.
 
 	var asciicastRec *recorder.AsciicastV3Recorder
 	var asciicastHeader *recorder.AsciicastV3Header
-	if srv.config.RecordingsDir != "" {
+	if srv.config.RecordingsDir != "" && !authKeyOpts.NoRecording {
 		if ok, err := srv.diskCleanup(); ok {
 			title := fmt.Sprintf(
 				"Connection to %q from %q (%s)",
@@ -540,7 +550,7 @@ func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.
 	}()
 
 	go func() {
-		if started, err := srv.handleRequests(requests, frontendConn, backendSession, asciicastRec, asciicastHeader); err != nil {
+		if started, err := srv.handleRequests(backendSession, authKeyOpts, requests, asciicastRec, asciicastHeader); err != nil {
 			slog.Error("failed to handle request", "error", err)
 			_ = backendSession.Close()
 		} else if !started {
@@ -575,22 +585,9 @@ func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.
 }
 
 func (srv *Server) handleRequests(
-	requests <-chan *ssh.Request,
-	frontendConn *ssh.ServerConn, backendSession *ssh.Session,
+	backendSession *ssh.Session, authKeyOpts *AuthorizedKeyOptions, requests <-chan *ssh.Request,
 	asciicastRec *recorder.AsciicastV3Recorder, asciicastHeader *recorder.AsciicastV3Header,
 ) (bool, error) {
-	authKeyOptsStr := frontendConn.Permissions.Extensions[sshKeyOptsExt]
-	if authKeyOptsStr == "" {
-		_ = frontendConn.Close()
-		return false, fmt.Errorf("authorized key options not provided")
-	}
-
-	var authKeyOpts AuthorizedKeyOptions
-	if err := json.Unmarshal([]byte(authKeyOptsStr), &authKeyOpts); err != nil {
-		_ = frontendConn.Close()
-		return false, err
-	}
-
 	started := false
 	for req := range requests {
 		ok := false
@@ -797,19 +794,7 @@ func (srv *Server) isNonInteractiveCommand(command string) bool {
 	return cmd == "rsync" || cmd == "git" || strings.HasPrefix(cmd, "git-")
 }
 
-func (srv *Server) handleDirectTCPIP(frontendConn *ssh.ServerConn, backendConn *ssh.Client, newChannel ssh.NewChannel) error {
-	authKeyOptsStr := frontendConn.Permissions.Extensions[sshKeyOptsExt]
-	if authKeyOptsStr == "" {
-		_ = newChannel.Reject(ssh.ConnectionFailed, "internal error")
-		return fmt.Errorf("authorized key options not provided")
-	}
-
-	var authKeyOpts AuthorizedKeyOptions
-	if err := json.Unmarshal([]byte(authKeyOptsStr), &authKeyOpts); err != nil {
-		_ = newChannel.Reject(ssh.ConnectionFailed, "internal error")
-		return err
-	}
-
+func (srv *Server) handleDirectTCPIP(backendConn *ssh.Client, authKeyOpts *AuthorizedKeyOptions, newChannel ssh.NewChannel) error {
 	if authKeyOpts.NoPortForwarding {
 		_ = newChannel.Reject(ssh.Prohibited, "port forwarding disabled")
 		return nil
@@ -881,27 +866,7 @@ func (srv *Server) handleDirectTCPIP(frontendConn *ssh.ServerConn, backendConn *
 	return nil
 }
 
-func (srv *Server) handleTCPIPForward(
-	req *ssh.Request,
-	frontendConn *ssh.ServerConn,
-	backendConn *ssh.Client,
-) error {
-	authKeyOptsStr := frontendConn.Permissions.Extensions[sshKeyOptsExt]
-	if authKeyOptsStr == "" {
-		if req.WantReply {
-			_ = req.Reply(false, nil)
-		}
-		return fmt.Errorf("authorized key options not provided")
-	}
-
-	var authKeyOpts AuthorizedKeyOptions
-	if err := json.Unmarshal([]byte(authKeyOptsStr), &authKeyOpts); err != nil {
-		if req.WantReply {
-			_ = req.Reply(false, nil)
-		}
-		return err
-	}
-
+func (srv *Server) handleTCPIPForward(backendConn *ssh.Client, authKeyOpts *AuthorizedKeyOptions, req *ssh.Request) error {
 	if authKeyOpts.NoPortForwarding {
 		if req.WantReply {
 			_ = req.Reply(false, nil)
@@ -951,19 +916,7 @@ func (srv *Server) handleTCPIPForward(
 	return nil
 }
 
-func (srv *Server) handleForwardedTCPIP(frontendConn *ssh.ServerConn, newChannel ssh.NewChannel) error {
-	authKeyOptsStr := frontendConn.Permissions.Extensions[sshKeyOptsExt]
-	if authKeyOptsStr == "" {
-		_ = newChannel.Reject(ssh.ConnectionFailed, "internal error")
-		return fmt.Errorf("authorized key options not provided")
-	}
-
-	var authKeyOpts AuthorizedKeyOptions
-	if err := json.Unmarshal([]byte(authKeyOptsStr), &authKeyOpts); err != nil {
-		_ = newChannel.Reject(ssh.ConnectionFailed, "internal error")
-		return err
-	}
-
+func (srv *Server) handleForwardedTCPIP(frontendConn *ssh.ServerConn, authKeyOpts *AuthorizedKeyOptions, newChannel ssh.NewChannel) error {
 	if authKeyOpts.NoPortForwarding {
 		_ = newChannel.Reject(ssh.Prohibited, "port forwarding disabled")
 		return nil

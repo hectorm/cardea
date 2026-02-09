@@ -35,6 +35,7 @@ type AuthorizedKeyOptions struct {
 	Command          string                 `json:"command"`
 	NoPortForwarding bool                   `json:"no_port_forwarding"`
 	NoPty            bool                   `json:"no_pty"`
+	NoRecording      bool                   `json:"no_recording"`
 }
 
 type PermitConnect struct {
@@ -199,6 +200,10 @@ func parseOptions(opts []string) (*AuthorizedKeyOptions, error) {
 		case "restrict":
 			authKeyOpts.NoPortForwarding = true
 			authKeyOpts.NoPty = true
+		case "recording":
+			authKeyOpts.NoRecording = false
+		case "no-recording":
+			authKeyOpts.NoRecording = true
 		}
 	}
 
