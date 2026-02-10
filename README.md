@@ -178,6 +178,13 @@ permitconnect="user1@host1:port1,user2@host2:port2",permitopen="host1:port1,host
   - Supports glob patterns and ranges (e.g., `8000-8999`) for ports.
   - By default, remote port forwarding is disabled.
   - **Example:** `permitlisten="localhost:8080,0.0.0.0:8000-8999"`.
+- **`environment`**: controls environment variables on the backend session (can be specified multiple times). Three forms are supported:
+  - **`NAME=value`**: sets a server-side variable. The client cannot override it. If specified multiple times for the same name, the last one wins.
+  - **`+PATTERN`**: allows the client to forward variables matching the glob pattern.
+  - **`-PATTERN`**: blocks the client from forwarding variables matching the glob pattern.
+  - By default, all client environment variables are blocked. Rules are evaluated in order; the last matching `+` or `-` rule wins.
+  - The backend SSH server must be configured to accept the variables (e.g., `AcceptEnv NAME` in OpenSSH's `sshd_config`).
+  - **Example:** `environment="LANG=en_US.UTF-8",environment="+TERM",environment="+LC_*",environment="-LC_MESSAGES"`.
 - **`from`**: comma-separated list of source IP patterns that are allowed to use this key (can be specified multiple times).
   - Supports glob patterns and CIDR blocks for hosts.
   - Supports negation with `!` prefix (patterns are evaluated in order, negation overrides previous matches).

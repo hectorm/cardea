@@ -28,6 +28,7 @@ type AuthorizedKeyOptions struct {
 	PermitConnects   []PermitConnect        `json:"permit_connects"`
 	PermitOpens      []PermitOpen           `json:"permit_opens"`
 	PermitListens    []PermitListen         `json:"permit_listens"`
+	Environments     []Environment          `json:"environments"`
 	Froms            []string               `json:"froms"`
 	StartTime        *time.Time             `json:"start_time"`
 	ExpiryTime       *time.Time             `json:"expiry_time"`
@@ -52,6 +53,12 @@ type PermitOpen struct {
 type PermitListen struct {
 	Host string `json:"host"`
 	Port string `json:"port"`
+}
+
+type Environment struct {
+	Sign  string `json:"sign"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 func (srv *Server) newAuthorizedKeysDB(path string) (map[string][]*AuthorizedKeyOptions, error) {
@@ -157,6 +164,12 @@ func parseOptions(opts []string) (*AuthorizedKeyOptions, error) {
 				}
 				authKeyOpts.PermitListens = append(authKeyOpts.PermitListens, *permitlisten)
 			}
+		case "environment":
+			environment, err := parseEnvironment(val)
+			if err != nil {
+				return nil, err
+			}
+			authKeyOpts.Environments = append(authKeyOpts.Environments, *environment)
 		case "from":
 			for v := range strings.SplitSeq(val, ",") {
 				authKeyOpts.Froms = append(authKeyOpts.Froms, strings.TrimSpace(v))
@@ -316,6 +329,38 @@ func parsePermitListen(permitlisten string) (*PermitListen, error) {
 	}
 
 	return nil, fmt.Errorf("invalid permitlisten format, expected <host>:<port>, got %s", permitlisten)
+}
+
+func parseEnvironment(s string) (*Environment, error) {
+	if len(s) > 0 && (s[0] == '+' || s[0] == '-') {
+		pattern := s[1:]
+		if pattern == "" {
+			return nil, fmt.Errorf("empty environment pattern")
+		}
+		for _, c := range pattern {
+			if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '*' || c == '?' || c == '[' || c == ']') {
+				return nil, fmt.Errorf("invalid environment pattern %q", pattern)
+			}
+		}
+		if _, err := filepath.Match(pattern, ""); err != nil {
+			return nil, fmt.Errorf("invalid environment pattern %q: %w", pattern, err)
+		}
+		return &Environment{Sign: string(s[0]), Name: pattern}, nil
+	}
+
+	i := strings.IndexByte(s, '=')
+	if i < 1 {
+		return nil, fmt.Errorf("invalid environment format, expected NAME=value, got %s", s)
+	}
+
+	name := s[:i]
+	for _, c := range name {
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_') {
+			return nil, fmt.Errorf("invalid environment variable name %q", name)
+		}
+	}
+
+	return &Environment{Name: name, Value: s[i+1:]}, nil
 }
 
 func parseTimespec(s string) (time.Time, error) {

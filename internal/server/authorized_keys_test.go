@@ -18,6 +18,7 @@ func FuzzAuthorizedKeysParse(f *testing.F) {
 
 	// Option combinations
 	f.Add(`permitconnect="user@host:22",permitopen="localhost:8080",permitlisten="localhost:9090",from="10.0.0.0/8" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",environment="FOO=bar" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 	f.Add(`permitconnect="user@host:22",start-time="20060102150405Z",expiry-time="26660102150405Z" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 	f.Add(`permitconnect="user@host:22",time-window="dow:mon-fri hour:8-17 tz:Europe/Madrid" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 	f.Add(`permitconnect="user@host:22",time-window="dow:mon-thu hour:8-17 tz:Europe/Madrid",time-window="dow:fri hour:8-14 tz:Europe/Madrid" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
@@ -46,6 +47,14 @@ func FuzzAuthorizedKeysParse(f *testing.F) {
 	f.Add(`permitconnect="user@:22"`)
 	f.Add(`permitconnect="@host:22"`)
 	f.Add(`permitconnect="user@host:"`)
+
+	// Malformed environment
+	f.Add(`permitconnect="user@host:22",environment="" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",environment="NOEQUALS" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",environment="=value" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",environment="BAD-NAME=value" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",environment="+" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",environment="-" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 
 	// Malformed start-time and expiry-time
 	f.Add(`start-time="invalid"`)
@@ -100,6 +109,12 @@ func FuzzAuthorizedKeysParse(f *testing.F) {
 				for _, pl := range opts.PermitListens {
 					if pl.Host == "" || pl.Port == "" {
 						t.Errorf("PermitListen has empty field: %+v", pl)
+					}
+				}
+
+				for _, env := range opts.Environments {
+					if env.Name == "" {
+						t.Errorf("Environment has empty name: %+v", env)
 					}
 				}
 			}
