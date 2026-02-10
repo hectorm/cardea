@@ -506,6 +506,14 @@ func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.
 		}
 	}
 
+	for _, env := range authKeyOpts.Environments {
+		if env.Sign == "" {
+			if err := backendSession.Setenv(env.Name, env.Value); err != nil {
+				slog.Debug("failed to set environment variable from authorized key", "name", env.Name, "error", err)
+			}
+		}
+	}
+
 	backendStdin, err := backendSession.StdinPipe()
 	if err != nil {
 		return err
@@ -671,6 +679,11 @@ func (srv *Server) handleRequests(
 			}
 			if err := ssh.Unmarshal(req.Payload, &payload); err != nil {
 				slog.Error("failed to parse env payload", "error", err)
+				break
+			}
+			if !srv.isClientEnvAllowed(authKeyOpts, payload.Name) {
+				slog.Debug("ignoring client env request", "name", payload.Name)
+				ok = true
 				break
 			}
 			if asciicastHeader != nil {
@@ -1406,6 +1419,29 @@ func (srv *Server) matchPortPattern(pattern string, port any) bool {
 	}
 
 	return false
+}
+
+func (srv *Server) isClientEnvAllowed(authKeyOpts *AuthorizedKeyOptions, name string) bool {
+	allowed := false
+
+	for _, env := range authKeyOpts.Environments {
+		switch env.Sign {
+		case "+":
+			if srv.matchShellPattern(env.Name, name) {
+				allowed = true
+			}
+		case "-":
+			if srv.matchShellPattern(env.Name, name) {
+				allowed = false
+			}
+		default:
+			if env.Name == name {
+				return false
+			}
+		}
+	}
+
+	return allowed
 }
 
 func (srv *Server) matchShellPattern(pattern, value string) bool {

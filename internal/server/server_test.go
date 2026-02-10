@@ -604,6 +604,83 @@ func TestBastionSSHServer(t *testing.T) {
 		}
 	})
 
+	t.Run("environment", func(t *testing.T) {
+		cli, cliPublicKey, err := setupClient(t)
+		if err != nil {
+			t.Errorf("failed to setup client: %v", err)
+			return
+		}
+		cli.User = fmt.Sprintf("alice@%s", mockAddr)
+		cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
+
+		tests := []struct {
+			name     string
+			envOpts  string
+			varName  string
+			cliValue string
+			expected string
+		}{
+			{name: "single_variable", envOpts: `environment="FOO=bar"`, varName: "FOO", expected: "bar"},
+			{name: "multiple_variables", envOpts: `environment="AAA=111",environment="BBB=222"`, varName: "AAA", expected: "111"},
+			{name: "value_with_equals", envOpts: `environment="KEY=val=ue"`, varName: "KEY", expected: "val=ue"},
+			{name: "duplicate_last_wins", envOpts: `environment="FOO=first",environment="FOO=last"`, varName: "FOO", expected: "last"},
+			{name: "deny_client_by_default", envOpts: ``, varName: "FOO", cliValue: "client", expected: ""},
+			{name: "accept_client_variable", envOpts: `environment="+FOO"`, varName: "FOO", cliValue: "client", expected: "client"},
+			{name: "client_cannot_override", envOpts: `environment="FOO=server",environment="+FOO"`, varName: "FOO", cliValue: "client", expected: "server"},
+			{name: "accept_wildcard", envOpts: `environment="+LC_*"`, varName: "LC_ALL", cliValue: "C", expected: "C"},
+			{name: "deny_overrides_accept", envOpts: `environment="+LC_*",environment="-LC_MESSAGES"`, varName: "LC_MESSAGES", cliValue: "C", expected: ""},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				var authKeysContent string
+				if tt.envOpts != "" {
+					authKeysContent = fmt.Sprintf(`permitconnect="alice@%s",%s %s`, mockAddr, tt.envOpts, cliAuthorizedKeyStr)
+				} else {
+					authKeysContent = fmt.Sprintf(`permitconnect="alice@%s" %s`, mockAddr, cliAuthorizedKeyStr)
+				}
+				bastionSrv, err := setupBastionServer(t,
+					authKeysContent,
+					fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				)
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
+
+				bastionConn, err := connectToServer(t, cli, bastionSrv)
+				if err != nil {
+					t.Errorf("failed to connect to server: %v", err)
+					return
+				}
+
+				session, err := bastionConn.NewSession()
+				if err != nil {
+					t.Errorf("failed to create session: %v", err)
+					return
+				}
+				defer func() { _ = session.Close() }()
+
+				if tt.cliValue != "" {
+					if err := session.Setenv(tt.varName, tt.cliValue); err != nil {
+						t.Errorf("failed to set env: %v", err)
+						return
+					}
+				}
+
+				output, err := session.Output("printenv " + tt.varName)
+				if err != nil {
+					t.Errorf("failed to execute command: %v", err)
+					return
+				}
+				if got := strings.TrimRight(string(output), "\r\n"); got != tt.expected {
+					t.Errorf("unexpected output: got %q, want %q", got, tt.expected)
+					return
+				}
+			})
+		}
+	})
+
 	t.Run("from", func(t *testing.T) {
 		cli, cliPublicKey, err := setupClient(t)
 		if err != nil {
@@ -1111,7 +1188,7 @@ func TestBastionSSHServer(t *testing.T) {
 		t.Run("shell", func(t *testing.T) {
 			recordingsDir := t.TempDir()
 			bastionSrv, err := setupBastionServer(t,
-				fmt.Sprintf(`permitconnect="alice@%s" %s`, mockAddr, cliAuthorizedKeyStr),
+				fmt.Sprintf(`permitconnect="alice@%s",environment="+FOO" %s`, mockAddr, cliAuthorizedKeyStr),
 				fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
 				func(srv *Server) error {
 					srv.config.RecordingsDir = recordingsDir
@@ -2301,6 +2378,8 @@ func TestBastionSSHServer(t *testing.T) {
 				,permitopen="*:443",\
 				permitlisten="localhost:8080"\
 				,permitlisten="localhost:9090",\
+				environment="FOO=bar"\
+				,environment="BAZ=quux",\
 				from="10.0.0.0/8"\
 				,from="172.16.0.0/12",\
 				start-time="20060101Z"\
@@ -2717,6 +2796,10 @@ func TestBastionSSHServer(t *testing.T) {
 								{Host: "localhost", Port: "8080"},
 								{Host: "localhost", Port: "9090"},
 							},
+							Environments: []Environment{
+								{Name: "FOO", Value: "bar"},
+								{Name: "BAZ", Value: "quux"},
+							},
 							Froms:      []string{"10.0.0.0/8", "172.16.0.0/12"},
 							StartTime:  func() *time.Time { t := time.Date(2006, 1, 2, 0, 0, 0, 0, time.UTC); return &t }(),
 							ExpiryTime: func() *time.Time { t := time.Date(2006, 1, 1, 0, 0, 0, 0, time.UTC); return &t }(),
@@ -3128,6 +3211,41 @@ func TestBastionSSHServer(t *testing.T) {
 				content:  fmt.Sprintf(`permitconnect="*@example.com:22",permitlisten="invalid" %s`, aliceKeyAuth),
 				expected: map[string][]*AuthorizedKeyOptions{},
 			},
+			// Empty environment value
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",environment="" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Environment missing equals sign
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",environment="NOEQUALS" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Environment with empty name
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",environment="=value" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Environment with invalid name
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",environment="BAD-NAME=value" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Environment with invalid name (dot)
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",environment="BAD.NAME=value" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Empty accept pattern
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",environment="+" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
+			// Empty deny pattern
+			{
+				content:  fmt.Sprintf(`permitconnect="*@example.com:22",environment="-" %s`, aliceKeyAuth),
+				expected: map[string][]*AuthorizedKeyOptions{},
+			},
 			// Empty start-time value
 			{
 				content:  fmt.Sprintf(`permitconnect="*@example.com:22",start-time="" %s`, aliceKeyAuth),
@@ -3491,6 +3609,16 @@ func TestBastionSSHServer(t *testing.T) {
 									return
 								}
 							}
+							if len(opts.Environments) != len(expectedOpts.Environments) {
+								t.Errorf("expected %d environments for key, got %d", len(expectedOpts.Environments), len(opts.Environments))
+								return
+							}
+							for j, env := range opts.Environments {
+								if env != expectedOpts.Environments[j] {
+									t.Errorf("expected environment %+v for key, got %+v", expectedOpts.Environments[j], env)
+									return
+								}
+							}
 							if len(opts.Froms) != len(expectedOpts.Froms) {
 								t.Errorf("expected %d froms for key, got %d", len(expectedOpts.Froms), len(opts.Froms))
 								return
@@ -3500,18 +3628,6 @@ func TestBastionSSHServer(t *testing.T) {
 									t.Errorf("expected from %q for key, got %q", expectedOpts.Froms[j], from)
 									return
 								}
-							}
-							if opts.Command != expectedOpts.Command {
-								t.Errorf("expected command %q for key, got %q", expectedOpts.Command, opts.Command)
-								return
-							}
-							if opts.NoPortForwarding != expectedOpts.NoPortForwarding {
-								t.Errorf("expected no-port-forwarding %t for key, got %t", expectedOpts.NoPortForwarding, opts.NoPortForwarding)
-								return
-							}
-							if opts.NoPty != expectedOpts.NoPty {
-								t.Errorf("expected no-pty %t for key, got %t", expectedOpts.NoPty, opts.NoPty)
-								return
 							}
 							if (opts.StartTime == nil) != (expectedOpts.StartTime == nil) {
 								t.Errorf("expected start-time %v for key, got %v", expectedOpts.StartTime, opts.StartTime)
@@ -3548,6 +3664,18 @@ func TestBastionSSHServer(t *testing.T) {
 									t.Errorf("expected time-window %s for key, got %s", expected, got)
 									return
 								}
+							}
+							if opts.Command != expectedOpts.Command {
+								t.Errorf("expected command %q for key, got %q", expectedOpts.Command, opts.Command)
+								return
+							}
+							if opts.NoPortForwarding != expectedOpts.NoPortForwarding {
+								t.Errorf("expected no-port-forwarding %t for key, got %t", expectedOpts.NoPortForwarding, opts.NoPortForwarding)
+								return
+							}
+							if opts.NoPty != expectedOpts.NoPty {
+								t.Errorf("expected no-pty %t for key, got %t", expectedOpts.NoPty, opts.NoPty)
+								return
 							}
 						}
 					}
