@@ -4229,7 +4229,7 @@ func TestBastionSSHServer(t *testing.T) {
 				}
 				req.Header.Set("Accept", "application/openmetrics-text; version=1.0.0")
 
-				resp, err := http.DefaultClient.Do(req)
+				resp, err := http.DefaultClient.Do(req) // #nosec G704
 				if err != nil {
 					t.Errorf("failed to request /metrics: %v", err)
 					return

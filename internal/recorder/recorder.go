@@ -73,7 +73,7 @@ func (r *AsciicastV3Recorder) WriteHeader(header *AsciicastV3Header) error {
 	}
 
 	if err := disk.LockFile(file); err != nil {
-		slog.Warn("failed to get exclusive lock on file", "file", file.Name(), "error", err)
+		slog.Warn("failed to get exclusive lock on file", "file", r.path, "error", err)
 	}
 
 	r.file = file

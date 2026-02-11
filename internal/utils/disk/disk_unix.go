@@ -10,11 +10,11 @@ import (
 )
 
 func LockFile(file *os.File) error {
-	return unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+	return unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB) // #nosec G115
 }
 
 func UnlockFile(file *os.File) error {
-	return unix.Flock(int(file.Fd()), unix.LOCK_UN)
+	return unix.Flock(int(file.Fd()), unix.LOCK_UN) // #nosec G115
 }
 
 func SyncDir(path string) error {
