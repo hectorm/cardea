@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -2143,6 +2142,12 @@ func TestBastionSSHServer(t *testing.T) {
 		carolKeyStr := string(carolKey.Marshal())
 		carolKeyAuth := marshalAuthorizedKey(carolKey)
 
+		defaultPermitOpens := []PermitOpen{
+			{Host: "localhost", Port: "1-65535"},
+			{Host: "127.0.0.1/8", Port: "1-65535"},
+			{Host: "::1/128", Port: "1-65535"},
+		}
+
 		tests := []struct {
 			content  string
 			expected map[string][]*AuthorizedKeyOptions
@@ -2372,22 +2377,18 @@ func TestBastionSSHServer(t *testing.T) {
 				permitconnect="*@nested-team.example.com:22" T50_TEAM
 
 				# [T51] Multiple declarations of same option type
-				permitconnect="*@multi-decl-1.example.com:22"\
-				,permitconnect="*@multi-decl-2.example.com:22",\
-				permitopen="*:80"\
-				,permitopen="*:443",\
-				permitlisten="localhost:8080"\
-				,permitlisten="localhost:9090",\
-				environment="FOO=bar"\
-				,environment="BAZ=quux",\
-				from="10.0.0.0/8"\
-				,from="172.16.0.0/12",\
-				start-time="20060101Z"\
-				,start-time="20060102Z",\
-				expiry-time="20060101Z"\
-				,expiry-time="20060102Z",\
-				time-window="dow:mon-thu hour:8-17 tz:Europe/Madrid"\
-				,time-window="dow:fri hour:8-14 tz:Europe/Madrid" \
+				permitconnect="*@multi-decl-1.example.com:22",permitconnect="*@multi-decl-2.example.com:22",\
+				permitopen="*:80",permitopen="*:443",\
+				permitlisten="localhost:8080",permitlisten="localhost:9090",\
+				environment="FOO=bar",environment="BAZ=quux",\
+				from="10.0.0.0/8",from="172.16.0.0/12",\
+				start-time="20060101Z",start-time="20060102Z",\
+				expiry-time="20060101Z",expiry-time="20060102Z",\
+				time-window="dow:mon-thu hour:8-17 tz:Europe/Madrid",time-window="dow:fri hour:8-14 tz:Europe/Madrid",\
+				command="first",command="last",\
+				no-port-forwarding,port-forwarding,\
+				no-pty,pty,\
+				no-recording,recording \
 				ALICE_KEY
 
 				# [T52] Restrict
@@ -2400,48 +2401,24 @@ func TestBastionSSHServer(t *testing.T) {
 					aliceKeyStr: {
 						// [T1]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "basic.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "basic.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T4]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "altformat.example.com", Port: "2222"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "altformat.example.com", Port: "2222"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T7]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "no-port-fwd.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects:   []PermitConnect{{User: "*", Host: "no-port-fwd.example.com", Port: "22"}},
+							PermitOpens:      defaultPermitOpens,
 							NoPortForwarding: true,
 						},
 						// [T10]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "macro-key.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "macro-key.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T13]
 						{
@@ -2451,55 +2428,27 @@ func TestBastionSSHServer(t *testing.T) {
 								{User: "*", Host: "10.0.1.0/24", Port: "22"},
 								{User: "*", Host: "macro-value.example.com", Port: "22"},
 							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitOpens: defaultPermitOpens,
 						},
 						// [T14]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "nested-macro.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "nested-macro.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T17]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "crlf-comment.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "crlf-comment.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T18]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "inline-define-key.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "inline-define-key.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T19]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "inline-define-team.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "inline-define-team.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T20]
 						{
@@ -2507,211 +2456,99 @@ func TestBastionSSHServer(t *testing.T) {
 								{User: "*", Host: "inline-multiline-1.example.com", Port: "22"},
 								{User: "*", Host: "inline-multiline-2.example.com", Port: "22"},
 							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitOpens: defaultPermitOpens,
 						},
 						// [T21]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "inline-rule.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "inline-rule.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T22]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "inline-rule-pipe.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "inline-rule-pipe.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T23]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "pipe-continuation.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "pipe-continuation.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T24]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "macro-pipe.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "macro-pipe.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T27]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "escaped-backslash.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
-							Command: `echo C:\\path\\file`,
+							PermitConnects: []PermitConnect{{User: "*", Host: "escaped-backslash.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
+							Command:        `echo C:\\path\\file`,
 						},
 						// [T28]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "multi-entry-1.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "multi-entry-1.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T28]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "multi-entry-2.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "multi-entry-2.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T29]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "empty-pipes.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "empty-pipes.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T30]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "empty-macro.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "empty-macro.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T31]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "padded-macro.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "padded-macro.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T32]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "redef-last.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "redef-last.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T33]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "seq-first.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "seq-first.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T34]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "token-boundary.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "token-boundary.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T35]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "tab-define.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "tab-define.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T36]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "underscore-prefix.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "underscore-prefix.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T37]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "alphanumeric-name.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "alphanumeric-name.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T38]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "eof-no-newline.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "eof-no-newline.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T39]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "#user", Host: "hash#host.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
-							Command: "echo # not a comment",
+							PermitConnects: []PermitConnect{{User: "#user", Host: "hash#host.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
+							Command:        "echo # not a comment",
 						},
 						// [T40]
 						{
@@ -2719,68 +2556,34 @@ func TestBastionSSHServer(t *testing.T) {
 								{User: "*", Host: "hash-adjacent.example.com", Port: "22"},
 								{User: "*", Host: "other#host.example.com", Port: "22"},
 							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitOpens: defaultPermitOpens,
 						},
 						// [T41]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "after-unclosed.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "after-unclosed.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T42]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "opts-template.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
-							Command: "internal-sftp",
-							NoPty:   true,
+							PermitConnects: []PermitConnect{{User: "*", Host: "opts-template.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
+							Command:        "internal-sftp",
+							NoPty:          true,
 						},
 						// [T45]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "line-template.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "line-template.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T48]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "admin", Host: "user-pattern.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "admin", Host: "user-pattern.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T50]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "nested-team.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "nested-team.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T51]
 						{
@@ -2807,17 +2610,15 @@ func TestBastionSSHServer(t *testing.T) {
 								tw, _ := timewindow.Parse("dow:mon-thu hour:8-17 tz:Europe/Madrid,dow:fri hour:8-14 tz:Europe/Madrid")
 								return tw
 							}(),
+							Command:          "last",
+							NoPortForwarding: false,
+							NoPty:            false,
+							NoRecording:      false,
 						},
 						// [T52]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "restrict.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects:   []PermitConnect{{User: "*", Host: "restrict.example.com", Port: "22"}},
+							PermitOpens:      defaultPermitOpens,
 							NoPortForwarding: true,
 							NoPty:            true,
 						},
@@ -2829,34 +2630,18 @@ func TestBastionSSHServer(t *testing.T) {
 								{User: "*", Host: "192.168.0.0/16", Port: "22"},
 								{User: "*", Host: "172.16.0.0/12", Port: "22"},
 							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitOpens: defaultPermitOpens,
 						},
 						// [T5]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "2001:db8::1", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "2001:db8::1", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T8]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "command.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
-							Command: "internal-sftp",
+							PermitConnects: []PermitConnect{{User: "*", Host: "command.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
+							Command:        "internal-sftp",
 						},
 						// [T11]
 						{
@@ -2864,17 +2649,11 @@ func TestBastionSSHServer(t *testing.T) {
 								{User: "*", Host: "10.0.1.0/24", Port: "22"},
 								{User: "*", Host: "macro-value.example.com", Port: "22"},
 							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitOpens: defaultPermitOpens,
 						},
 						// [T15]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "line-cont-lf.example.com", Port: "22"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "line-cont-lf.example.com", Port: "22"}},
 							PermitOpens: []PermitOpen{
 								{Host: "*", Port: "80"},
 								{Host: "*", Port: "443"},
@@ -2882,136 +2661,66 @@ func TestBastionSSHServer(t *testing.T) {
 						},
 						// [T19]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "inline-define-team.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "inline-define-team.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T22]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "inline-rule-pipe.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "inline-rule-pipe.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T24]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "macro-pipe.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "macro-pipe.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T25]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "pipe-in-command.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
-							Command: "echo hello | grep h",
+							PermitConnects: []PermitConnect{{User: "*", Host: "pipe-in-command.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
+							Command:        "echo hello | grep h",
 						},
 						// [T29]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "empty-pipes.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "empty-pipes.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T33]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "seq-second.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "seq-second.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T41]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "unclosed-quote.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "unclosed-quote.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T43]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "app.prod.us.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "app.prod.us.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T46]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "opts-composed.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects:   []PermitConnect{{User: "*", Host: "opts-composed.example.com", Port: "22"}},
+							PermitOpens:      defaultPermitOpens,
 							NoPty:            true,
 							NoPortForwarding: true,
 						},
 						// [T49]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "multi-option.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "multi-option.example.com", Port: "80"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "multi-option.example.com", Port: "22"}},
+							PermitOpens:    []PermitOpen{{Host: "multi-option.example.com", Port: "80"}},
 						},
 						// [T50]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "nested-team.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "nested-team.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T53]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "restrict-override.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects:   []PermitConnect{{User: "*", Host: "restrict-override.example.com", Port: "22"}},
+							PermitOpens:      defaultPermitOpens,
 							NoPortForwarding: false,
 							NoPty:            false,
 						},
@@ -3019,9 +2728,7 @@ func TestBastionSSHServer(t *testing.T) {
 					carolKeyStr: {
 						// [T3]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "permitopen.example.com", Port: "22"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "permitopen.example.com", Port: "22"}},
 							PermitOpens: []PermitOpen{
 								{Host: "*", Port: "80"},
 								{Host: "*", Port: "443"},
@@ -3029,29 +2736,15 @@ func TestBastionSSHServer(t *testing.T) {
 						},
 						// [T6]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "no-pty.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
-							NoPty: true,
+							PermitConnects: []PermitConnect{{User: "*", Host: "no-pty.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
+							NoPty:          true,
 						},
 						// [T9]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "permitlisten.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
-							PermitListens: []PermitListen{
-								{Host: "localhost", Port: "8080"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "permitlisten.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
+							PermitListens:  []PermitListen{{Host: "localhost", Port: "8080"}},
 						},
 						// [T12]
 						{
@@ -3059,17 +2752,11 @@ func TestBastionSSHServer(t *testing.T) {
 								{User: "*", Host: "10.0.0.0/24", Port: "22"},
 								{User: "*", Host: "multiline-macro.example.com", Port: "22"},
 							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitOpens: defaultPermitOpens,
 						},
 						// [T16]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "line-cont-crlf.example.com", Port: "22"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "line-cont-crlf.example.com", Port: "22"}},
 							PermitOpens: []PermitOpen{
 								{Host: "*", Port: "80"},
 								{Host: "*", Port: "443"},
@@ -3077,37 +2764,19 @@ func TestBastionSSHServer(t *testing.T) {
 						},
 						// [T23]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "pipe-continuation.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "pipe-continuation.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T26]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "escaped-quotes.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
-							Command: `echo "hello"`,
+							PermitConnects: []PermitConnect{{User: "*", Host: "escaped-quotes.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
+							Command:        `echo "hello"`,
 						},
 						// [T29]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "empty-pipes.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "empty-pipes.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T44]
 						{
@@ -3115,573 +2784,344 @@ func TestBastionSSHServer(t *testing.T) {
 								{User: "*", Host: "hierarchy-1.example.com", Port: "22"},
 								{User: "*", Host: "hierarchy-2.example.com", Port: "22"},
 							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitOpens: defaultPermitOpens,
 						},
 						// [T47]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "port-abstract.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "port-abstract.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 						// [T50]
 						{
-							PermitConnects: []PermitConnect{
-								{User: "*", Host: "nested-team.example.com", Port: "22"},
-							},
-							PermitOpens: []PermitOpen{
-								{Host: "localhost", Port: "1-65535"},
-								{Host: "127.0.0.1/8", Port: "1-65535"},
-								{Host: "::1/128", Port: "1-65535"},
-							},
+							PermitConnects: []PermitConnect{{User: "*", Host: "nested-team.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
 						},
 					},
 				},
 			},
-			// Empty file content
-			{
-				content:  ``,
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Whitespace-only file content
-			{
-				content:  `   `,
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Tabs and newlines only content
-			{
-				content:  "\t\n\t\n",
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Comment-only content
-			{
-				content:  "# comment only\n# another comment",
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid SSH key format
-			{
-				content:  `permitconnect="*@example.com:22" invalid`,
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// SSH key without any options
-			{
-				content:  aliceKeyAuth,
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Options without permitconnect
-			{
-				content:  fmt.Sprintf(`command="nologin" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Empty permitconnect value
-			{
-				content:  fmt.Sprintf(`permitconnect="" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid permitconnect format
-			{
-				content:  fmt.Sprintf(`permitconnect="invalid" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Empty permitopen value
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",permitopen="" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid permitopen format
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",permitopen="invalid" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Empty permitlisten value
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",permitlisten="" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid permitlisten format
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",permitlisten="invalid" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Empty environment value
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",environment="" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Environment missing equals sign
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",environment="NOEQUALS" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Environment with empty name
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",environment="=value" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Environment with invalid name
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",environment="BAD-NAME=value" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Environment with invalid name (dot)
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",environment="BAD.NAME=value" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Empty accept pattern
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",environment="+" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Empty deny pattern
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",environment="-" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Empty start-time value
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",start-time="" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid start-time length
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",start-time="2020Z" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid start-time month
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",start-time="20201301Z" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid start-time day
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",start-time="20200132Z" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Empty expiry-time value
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid expiry-time length
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="2099Z" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid expiry-time month
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="20991301Z" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid expiry-time day
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="20990132Z" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid expiry-time non-existent date
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="20990230Z" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid expiry-time hour
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="209901012500Z" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid expiry-time minute
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="209901010060Z" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid expiry-time second
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="20990101000060Z" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid expiry-time format (non-numeric YYYYMMDD)
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="ABCD0101Z" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid expiry-time format (non-numeric YYYYMMDDHHMM)
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="ABCD01010000Z" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid expiry-time format (non-numeric YYYYMMDDHHMMSS)
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="ABCD0101000000Z" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Empty time-window
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Whitespace-only time-window
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="   " %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid time-window unknown constraint type
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="foo:bar" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid time-window missing value
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid time-window missing colon
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="dow" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid time-window out-of-range hour
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:25" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid time-window out-of-range dow
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="dow:7" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid time-window out-of-range month
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="month:0" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid time-window wrap-around range
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="dow:fri-mon" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid time-window wrap-around hour
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:22-6" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid time-window timezone
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="tz:Invalid/Zone" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid time-window duplicate constraint
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:9 hour:10" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid time-window leading comma
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window=",dow:mon" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid time-window trailing comma
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="dow:mon," %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid time-window double comma
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="dow:mon,,dow:tue" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid time-window negative number
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:-1" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid time-window non-integer
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:9.5" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid time-window overflow
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:999999999999" %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Permitconnect value exceeding length limit
-			{
-				content:  fmt.Sprintf(`permitconnect="*@%s:22" %s`, strings.Repeat("a", 1100), aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Unterminated quoted string
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22 %s`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// CRLF inside quoted string
-			{
-				content:  fmt.Sprintf("permitconnect=\"*@example.com:22\",command=\"echo \r\ntest\" %s", aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Trailing backslash at EOF
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22" %s\`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Backslash-space before newline
-			{
-				content:  fmt.Sprintf("permitconnect=\"*@example.com:22\" \\ \n%s", aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Line continuation at EOF without key
-			{
-				content:  `permitconnect="*@example.com:22" \`,
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Pipe-only content
-			{
-				content:  "|",
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Pipe with whitespace-only segments
-			{
-				content:  `   |   |   `,
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Pipe segment without options
-			{
-				content:  fmt.Sprintf(`%s | %s`, aliceKeyAuth, bobKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Options on non-first pipe segment
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22" %s | permitconnect="*@other.com:22" %s`, aliceKeyAuth, bobKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid key in pipe segment
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22" %s | invalid`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Invalid key in middle pipe segment
-			{
-				content:  fmt.Sprintf(`permitconnect="*@example.com:22" %s | invalid | %s`, aliceKeyAuth, bobKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// #define without whitespace separator
-			{
-				content: `
-				#defineX MACRO value
-				permitconnect="*@example.com:22" MACRO
-				`,
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Macro name with leading digit
-			{
-				content: fmt.Sprintf(`
-				#define ALICE_KEY %s
-				#define 1BAD_KEY %s
-				permitconnect="*@example.com:22" 1BAD_KEY
-				`, aliceKeyAuth, bobKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Macro name with non-ASCII character
-			{
-				content: fmt.Sprintf(`
-				#define ALICE_KEY %s
-				#define BÄD_KEY %s
-				permitconnect="*@example.com:22" BÄD_KEY
-				`, aliceKeyAuth, bobKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Self-referential macro
-			{
-				content: fmt.Sprintf(`
-				#define ALICE_KEY %s
-				#define INFINITE INFINITE
-				permitconnect="*@example.com:22" INFINITE
-				`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Self-referential macro in quoted value
-			{
-				content: fmt.Sprintf(`
-				#define ALICE_KEY %s
-				#define INFINITE INFINITE
-				permitconnect="INFINITE" ALICE_KEY
-				`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Mutually recursive macros
-			{
-				content: `
-				#define A B
-				#define B A
-				permitconnect="*@example.com:22" A
-				`,
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Macro recursion exceeding depth limit
-			{
-				content: fmt.Sprintf(`
-				#define ALICE_KEY %s
-				#define L0 L1
-				#define L1 L2
-				#define L2 L3
-				#define L3 L4
-				#define L4 L5
-				#define L5 L6
-				#define L6 L7
-				#define L7 L8
-				#define L8 L9
-				#define L9 ALICE_KEY
-				permitconnect="*@example.com:22" L0
-				`, aliceKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Null byte only content
-			{
-				content:  "\x00",
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
-			// Null byte in SSH key data
-			{
-				content:  "permitconnect=\"*@example.com:22\" ssh-ed25519 AAAA\x00AAAA comment",
-				expected: map[string][]*AuthorizedKeyOptions{},
-			},
 		}
 
-		for n, tt := range tests {
-			t.Run(strconv.Itoa(n), func(t *testing.T) {
-				bastionSrv, err := setupBastionServer(t, tt.content, "")
-				if err != nil {
-					t.Errorf("failed to setup bastion server: %v", err)
-					return
-				}
+		for _, tt := range tests {
+			bastionSrv, err := setupBastionServer(t, tt.content, "")
+			if err != nil {
+				t.Errorf("failed to setup bastion server: %v", err)
+				return
+			}
 
-				if len(bastionSrv.authKeysDB) != len(tt.expected) {
-					t.Errorf("expected %d keys in authorized_keys db, got %d", len(tt.expected), len(bastionSrv.authKeysDB))
+			if len(bastionSrv.authKeysDB) != len(tt.expected) {
+				t.Errorf("expected %d keys in authorized_keys db, got %d", len(tt.expected), len(bastionSrv.authKeysDB))
+				return
+			}
+			for key, optsList := range bastionSrv.authKeysDB {
+				if expectedOptsList, ok := tt.expected[key]; !ok {
+					t.Error("expected key to be in authorized_keys db, but it was not found")
 					return
-				}
-				for key, optsList := range bastionSrv.authKeysDB {
-					if expectedOptsList, ok := tt.expected[key]; !ok {
-						t.Error("expected key to be in authorized_keys db, but it was not found")
-						return
-					} else if len(optsList) != len(expectedOptsList) {
-						t.Errorf("expected %d options for key, got %d", len(expectedOptsList), len(optsList))
-						return
-					} else {
-						for i, opts := range optsList {
-							expectedOpts := expectedOptsList[i]
-							if len(opts.PermitConnects) != len(expectedOpts.PermitConnects) {
-								t.Errorf("expected %d permitconnects for key, got %d", len(expectedOpts.PermitConnects), len(opts.PermitConnects))
-								return
-							}
-							for j, pc := range opts.PermitConnects {
-								expectedPC := expectedOpts.PermitConnects[j]
-								if pc.User != expectedPC.User || pc.Host != expectedPC.Host || pc.Port != expectedPC.Port {
-									t.Errorf("expected permitconnect %v for key, got %v", expectedPC, pc)
-									return
-								}
-							}
-							if len(opts.PermitOpens) != len(expectedOpts.PermitOpens) {
-								t.Errorf("expected %d permitopens for key, got %d", len(expectedOpts.PermitOpens), len(opts.PermitOpens))
-								return
-							}
-							for j, po := range opts.PermitOpens {
-								expectedPO := expectedOpts.PermitOpens[j]
-								if po.Host != expectedPO.Host || po.Port != expectedPO.Port {
-									t.Errorf("expected permitopen %v for key, got %v", expectedPO, po)
-									return
-								}
-							}
-							if len(opts.PermitListens) != len(expectedOpts.PermitListens) {
-								t.Errorf("expected %d permitlistens for key, got %d", len(expectedOpts.PermitListens), len(opts.PermitListens))
-								return
-							}
-							for j, pl := range opts.PermitListens {
-								expectedPL := expectedOpts.PermitListens[j]
-								if pl.Host != expectedPL.Host || pl.Port != expectedPL.Port {
-									t.Errorf("expected permitlisten %v for key, got %v", expectedPL, pl)
-									return
-								}
-							}
-							if len(opts.Environments) != len(expectedOpts.Environments) {
-								t.Errorf("expected %d environments for key, got %d", len(expectedOpts.Environments), len(opts.Environments))
-								return
-							}
-							for j, env := range opts.Environments {
-								if env != expectedOpts.Environments[j] {
-									t.Errorf("expected environment %+v for key, got %+v", expectedOpts.Environments[j], env)
-									return
-								}
-							}
-							if len(opts.Froms) != len(expectedOpts.Froms) {
-								t.Errorf("expected %d froms for key, got %d", len(expectedOpts.Froms), len(opts.Froms))
-								return
-							}
-							for j, from := range opts.Froms {
-								if from != expectedOpts.Froms[j] {
-									t.Errorf("expected from %q for key, got %q", expectedOpts.Froms[j], from)
-									return
-								}
-							}
-							if (opts.StartTime == nil) != (expectedOpts.StartTime == nil) {
-								t.Errorf("expected start-time %v for key, got %v", expectedOpts.StartTime, opts.StartTime)
-								return
-							}
-							if opts.StartTime != nil && !opts.StartTime.Equal(*expectedOpts.StartTime) {
-								t.Errorf("expected start-time %v for key, got %v", *expectedOpts.StartTime, *opts.StartTime)
-								return
-							}
-							if (opts.ExpiryTime == nil) != (expectedOpts.ExpiryTime == nil) {
-								t.Errorf("expected expiry-time %v for key, got %v", expectedOpts.ExpiryTime, opts.ExpiryTime)
-								return
-							}
-							if opts.ExpiryTime != nil && !opts.ExpiryTime.Equal(*expectedOpts.ExpiryTime) {
-								t.Errorf("expected expiry-time %v for key, got %v", *expectedOpts.ExpiryTime, *opts.ExpiryTime)
-								return
-							}
-							if (opts.TimeWindow == nil) != (expectedOpts.TimeWindow == nil) {
-								t.Errorf("expected time-window %v for key, got %v", expectedOpts.TimeWindow, opts.TimeWindow)
-								return
-							}
-							if opts.TimeWindow != nil {
-								got, err := json.Marshal(opts.TimeWindow)
-								if err != nil {
-									t.Errorf("failed to marshal time-window: %v", err)
-									return
-								}
-								expected, err := json.Marshal(expectedOpts.TimeWindow)
-								if err != nil {
-									t.Errorf("failed to marshal expected time-window: %v", err)
-									return
-								}
-								if string(got) != string(expected) {
-									t.Errorf("expected time-window %s for key, got %s", expected, got)
-									return
-								}
-							}
-							if opts.Command != expectedOpts.Command {
-								t.Errorf("expected command %q for key, got %q", expectedOpts.Command, opts.Command)
-								return
-							}
-							if opts.NoPortForwarding != expectedOpts.NoPortForwarding {
-								t.Errorf("expected no-port-forwarding %t for key, got %t", expectedOpts.NoPortForwarding, opts.NoPortForwarding)
-								return
-							}
-							if opts.NoPty != expectedOpts.NoPty {
-								t.Errorf("expected no-pty %t for key, got %t", expectedOpts.NoPty, opts.NoPty)
+				} else if len(optsList) != len(expectedOptsList) {
+					t.Errorf("expected %d options for key, got %d", len(expectedOptsList), len(optsList))
+					return
+				} else {
+					for i, opts := range optsList {
+						expectedOpts := expectedOptsList[i]
+						if len(opts.PermitConnects) != len(expectedOpts.PermitConnects) {
+							t.Errorf("expected %d permitconnects for key, got %d", len(expectedOpts.PermitConnects), len(opts.PermitConnects))
+							return
+						}
+						for j, pc := range opts.PermitConnects {
+							expectedPC := expectedOpts.PermitConnects[j]
+							if pc.User != expectedPC.User || pc.Host != expectedPC.Host || pc.Port != expectedPC.Port {
+								t.Errorf("expected permitconnect %v for key, got %v", expectedPC, pc)
 								return
 							}
 						}
+						if len(opts.PermitOpens) != len(expectedOpts.PermitOpens) {
+							t.Errorf("expected %d permitopens for key, got %d", len(expectedOpts.PermitOpens), len(opts.PermitOpens))
+							return
+						}
+						for j, po := range opts.PermitOpens {
+							expectedPO := expectedOpts.PermitOpens[j]
+							if po.Host != expectedPO.Host || po.Port != expectedPO.Port {
+								t.Errorf("expected permitopen %v for key, got %v", expectedPO, po)
+								return
+							}
+						}
+						if len(opts.PermitListens) != len(expectedOpts.PermitListens) {
+							t.Errorf("expected %d permitlistens for key, got %d", len(expectedOpts.PermitListens), len(opts.PermitListens))
+							return
+						}
+						for j, pl := range opts.PermitListens {
+							expectedPL := expectedOpts.PermitListens[j]
+							if pl.Host != expectedPL.Host || pl.Port != expectedPL.Port {
+								t.Errorf("expected permitlisten %v for key, got %v", expectedPL, pl)
+								return
+							}
+						}
+						if len(opts.Environments) != len(expectedOpts.Environments) {
+							t.Errorf("expected %d environments for key, got %d", len(expectedOpts.Environments), len(opts.Environments))
+							return
+						}
+						for j, env := range opts.Environments {
+							if env != expectedOpts.Environments[j] {
+								t.Errorf("expected environment %+v for key, got %+v", expectedOpts.Environments[j], env)
+								return
+							}
+						}
+						if len(opts.Froms) != len(expectedOpts.Froms) {
+							t.Errorf("expected %d froms for key, got %d", len(expectedOpts.Froms), len(opts.Froms))
+							return
+						}
+						for j, from := range opts.Froms {
+							if from != expectedOpts.Froms[j] {
+								t.Errorf("expected from %q for key, got %q", expectedOpts.Froms[j], from)
+								return
+							}
+						}
+						if (opts.StartTime == nil) != (expectedOpts.StartTime == nil) {
+							t.Errorf("expected start-time %v for key, got %v", expectedOpts.StartTime, opts.StartTime)
+							return
+						}
+						if opts.StartTime != nil && !opts.StartTime.Equal(*expectedOpts.StartTime) {
+							t.Errorf("expected start-time %v for key, got %v", *expectedOpts.StartTime, *opts.StartTime)
+							return
+						}
+						if (opts.ExpiryTime == nil) != (expectedOpts.ExpiryTime == nil) {
+							t.Errorf("expected expiry-time %v for key, got %v", expectedOpts.ExpiryTime, opts.ExpiryTime)
+							return
+						}
+						if opts.ExpiryTime != nil && !opts.ExpiryTime.Equal(*expectedOpts.ExpiryTime) {
+							t.Errorf("expected expiry-time %v for key, got %v", *expectedOpts.ExpiryTime, *opts.ExpiryTime)
+							return
+						}
+						if (opts.TimeWindow == nil) != (expectedOpts.TimeWindow == nil) {
+							t.Errorf("expected time-window %v for key, got %v", expectedOpts.TimeWindow, opts.TimeWindow)
+							return
+						}
+						if opts.TimeWindow != nil {
+							got, err := json.Marshal(opts.TimeWindow)
+							if err != nil {
+								t.Errorf("failed to marshal time-window: %v", err)
+								return
+							}
+							expected, err := json.Marshal(expectedOpts.TimeWindow)
+							if err != nil {
+								t.Errorf("failed to marshal expected time-window: %v", err)
+								return
+							}
+							if string(got) != string(expected) {
+								t.Errorf("expected time-window %s for key, got %s", expected, got)
+								return
+							}
+						}
+						if opts.Command != expectedOpts.Command {
+							t.Errorf("expected command %q for key, got %q", expectedOpts.Command, opts.Command)
+							return
+						}
+						if opts.NoPortForwarding != expectedOpts.NoPortForwarding {
+							t.Errorf("expected no-port-forwarding %t for key, got %t", expectedOpts.NoPortForwarding, opts.NoPortForwarding)
+							return
+						}
+						if opts.NoPty != expectedOpts.NoPty {
+							t.Errorf("expected no-pty %t for key, got %t", expectedOpts.NoPty, opts.NoPty)
+							return
+						}
+						if opts.NoRecording != expectedOpts.NoRecording {
+							t.Errorf("expected no-recording %t for key, got %t", expectedOpts.NoRecording, opts.NoRecording)
+							return
+						}
 					}
 				}
-			})
+			}
 		}
+
+		t.Run("reject", func(t *testing.T) {
+			tests := []struct {
+				name    string
+				content string
+			}{
+				// Empty/whitespace/comment content
+				{name: "empty_file", content: ``},
+				{name: "whitespace_only", content: `   `},
+				{name: "tabs_and_newlines", content: "\t\n\t\n"},
+				{name: "comment_only", content: "# comment only\n# another comment"},
+				// Invalid SSH key format
+				{name: "invalid_ssh_key", content: `permitconnect="*@example.com:22" invalid`},
+				// Key without options
+				{name: "key_without_options", content: aliceKeyAuth},
+				// Options without permitconnect
+				{name: "options_without_permitconnect", content: fmt.Sprintf(`command="nologin" %s`, aliceKeyAuth)},
+				// Invalid permitconnect
+				{name: "permitconnect_empty", content: fmt.Sprintf(`permitconnect="" %s`, aliceKeyAuth)},
+				{name: "permitconnect_invalid_format", content: fmt.Sprintf(`permitconnect="invalid" %s`, aliceKeyAuth)},
+				{name: "permitconnect_missing_user_at", content: fmt.Sprintf(`permitconnect="@host:22" %s`, aliceKeyAuth)},
+				{name: "permitconnect_missing_host_at", content: fmt.Sprintf(`permitconnect="user@:22" %s`, aliceKeyAuth)},
+				{name: "permitconnect_missing_port_at", content: fmt.Sprintf(`permitconnect="user@host:" %s`, aliceKeyAuth)},
+				{name: "permitconnect_missing_user_plus", content: fmt.Sprintf(`permitconnect="+host+22" %s`, aliceKeyAuth)},
+				{name: "permitconnect_missing_host_plus", content: fmt.Sprintf(`permitconnect="user++22" %s`, aliceKeyAuth)},
+				{name: "permitconnect_missing_port_plus", content: fmt.Sprintf(`permitconnect="user+host+" %s`, aliceKeyAuth)},
+				{name: "permitconnect_empty_user_and_host_at", content: fmt.Sprintf(`permitconnect="@:22" %s`, aliceKeyAuth)},
+				{name: "permitconnect_empty_user_and_host_plus", content: fmt.Sprintf(`permitconnect="++22" %s`, aliceKeyAuth)},
+				{name: "permitconnect_exceeding_length_at", content: fmt.Sprintf(`permitconnect="*@%s:22" %s`, strings.Repeat("a", 1100), aliceKeyAuth)},
+				{name: "permitconnect_exceeding_length_plus", content: fmt.Sprintf(`permitconnect="*+%s+22" %s`, strings.Repeat("a", 1100), aliceKeyAuth)},
+				// Invalid permitopen
+				{name: "permitopen_empty", content: fmt.Sprintf(`permitconnect="*@example.com:22",permitopen="" %s`, aliceKeyAuth)},
+				{name: "permitopen_invalid_format", content: fmt.Sprintf(`permitconnect="*@example.com:22",permitopen="invalid" %s`, aliceKeyAuth)},
+				{name: "permitopen_missing_host", content: fmt.Sprintf(`permitconnect="*@example.com:22",permitopen=":22" %s`, aliceKeyAuth)},
+				{name: "permitopen_missing_port", content: fmt.Sprintf(`permitconnect="*@example.com:22",permitopen="host:" %s`, aliceKeyAuth)},
+				{name: "permitopen_exceeding_length", content: fmt.Sprintf(`permitconnect="*@example.com:22",permitopen="%s:22" %s`, strings.Repeat("a", 550), aliceKeyAuth)},
+				// Invalid permitlisten
+				{name: "permitlisten_empty", content: fmt.Sprintf(`permitconnect="*@example.com:22",permitlisten="" %s`, aliceKeyAuth)},
+				{name: "permitlisten_invalid_format", content: fmt.Sprintf(`permitconnect="*@example.com:22",permitlisten="invalid" %s`, aliceKeyAuth)},
+				{name: "permitlisten_missing_host", content: fmt.Sprintf(`permitconnect="*@example.com:22",permitlisten=":22" %s`, aliceKeyAuth)},
+				{name: "permitlisten_missing_port", content: fmt.Sprintf(`permitconnect="*@example.com:22",permitlisten="host:" %s`, aliceKeyAuth)},
+				{name: "permitlisten_exceeding_length", content: fmt.Sprintf(`permitconnect="*@example.com:22",permitlisten="%s:22" %s`, strings.Repeat("a", 550), aliceKeyAuth)},
+				// Invalid environment
+				{name: "environment_empty", content: fmt.Sprintf(`permitconnect="*@example.com:22",environment="" %s`, aliceKeyAuth)},
+				{name: "environment_missing_equals", content: fmt.Sprintf(`permitconnect="*@example.com:22",environment="NOEQUALS" %s`, aliceKeyAuth)},
+				{name: "environment_empty_name", content: fmt.Sprintf(`permitconnect="*@example.com:22",environment="=value" %s`, aliceKeyAuth)},
+				{name: "environment_invalid_name_hyphen", content: fmt.Sprintf(`permitconnect="*@example.com:22",environment="BAD-NAME=value" %s`, aliceKeyAuth)},
+				{name: "environment_invalid_name_dot", content: fmt.Sprintf(`permitconnect="*@example.com:22",environment="BAD.NAME=value" %s`, aliceKeyAuth)},
+				{name: "environment_empty_accept_pattern", content: fmt.Sprintf(`permitconnect="*@example.com:22",environment="+" %s`, aliceKeyAuth)},
+				{name: "environment_empty_deny_pattern", content: fmt.Sprintf(`permitconnect="*@example.com:22",environment="-" %s`, aliceKeyAuth)},
+				{name: "environment_invalid_accept_glob", content: fmt.Sprintf(`permitconnect="*@example.com:22",environment="+VAR[" %s`, aliceKeyAuth)},
+				{name: "environment_invalid_deny_glob", content: fmt.Sprintf(`permitconnect="*@example.com:22",environment="-VAR[" %s`, aliceKeyAuth)},
+				// Invalid start-time
+				{name: "start_time_empty", content: fmt.Sprintf(`permitconnect="*@example.com:22",start-time="" %s`, aliceKeyAuth)},
+				{name: "start_time_invalid_length", content: fmt.Sprintf(`permitconnect="*@example.com:22",start-time="2020Z" %s`, aliceKeyAuth)},
+				{name: "start_time_invalid_month", content: fmt.Sprintf(`permitconnect="*@example.com:22",start-time="20201301Z" %s`, aliceKeyAuth)},
+				{name: "start_time_invalid_day", content: fmt.Sprintf(`permitconnect="*@example.com:22",start-time="20200132Z" %s`, aliceKeyAuth)},
+				{name: "start_time_nonexistent_date", content: fmt.Sprintf(`permitconnect="*@example.com:22",start-time="20200230Z" %s`, aliceKeyAuth)},
+				{name: "start_time_invalid_hour", content: fmt.Sprintf(`permitconnect="*@example.com:22",start-time="202001012500Z" %s`, aliceKeyAuth)},
+				{name: "start_time_invalid_minute", content: fmt.Sprintf(`permitconnect="*@example.com:22",start-time="202001010060Z" %s`, aliceKeyAuth)},
+				{name: "start_time_invalid_second", content: fmt.Sprintf(`permitconnect="*@example.com:22",start-time="20200101000060Z" %s`, aliceKeyAuth)},
+				{name: "start_time_non_numeric_ymd", content: fmt.Sprintf(`permitconnect="*@example.com:22",start-time="ABCD0101Z" %s`, aliceKeyAuth)},
+				{name: "start_time_non_numeric_ymdhm", content: fmt.Sprintf(`permitconnect="*@example.com:22",start-time="ABCD01010000Z" %s`, aliceKeyAuth)},
+				{name: "start_time_non_numeric_ymdhms", content: fmt.Sprintf(`permitconnect="*@example.com:22",start-time="ABCD0101000000Z" %s`, aliceKeyAuth)},
+				// Invalid expiry-time
+				{name: "expiry_time_empty", content: fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="" %s`, aliceKeyAuth)},
+				{name: "expiry_time_invalid_length", content: fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="2099Z" %s`, aliceKeyAuth)},
+				{name: "expiry_time_invalid_month", content: fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="20991301Z" %s`, aliceKeyAuth)},
+				{name: "expiry_time_invalid_day", content: fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="20990132Z" %s`, aliceKeyAuth)},
+				{name: "expiry_time_nonexistent_date", content: fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="20990230Z" %s`, aliceKeyAuth)},
+				{name: "expiry_time_invalid_hour", content: fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="209901012500Z" %s`, aliceKeyAuth)},
+				{name: "expiry_time_invalid_minute", content: fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="209901010060Z" %s`, aliceKeyAuth)},
+				{name: "expiry_time_invalid_second", content: fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="20990101000060Z" %s`, aliceKeyAuth)},
+				{name: "expiry_time_non_numeric_ymd", content: fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="ABCD0101Z" %s`, aliceKeyAuth)},
+				{name: "expiry_time_non_numeric_ymdhm", content: fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="ABCD01010000Z" %s`, aliceKeyAuth)},
+				{name: "expiry_time_non_numeric_ymdhms", content: fmt.Sprintf(`permitconnect="*@example.com:22",expiry-time="ABCD0101000000Z" %s`, aliceKeyAuth)},
+				// Invalid time-window
+				{name: "time_window_empty", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window="" %s`, aliceKeyAuth)},
+				{name: "time_window_whitespace_only", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window="   " %s`, aliceKeyAuth)},
+				{name: "time_window_unknown_constraint", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window="foo:bar" %s`, aliceKeyAuth)},
+				{name: "time_window_missing_value", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:" %s`, aliceKeyAuth)},
+				{name: "time_window_missing_colon", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window="dow" %s`, aliceKeyAuth)},
+				{name: "time_window_hour_out_of_range", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:25" %s`, aliceKeyAuth)},
+				{name: "time_window_dow_out_of_range", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window="dow:7" %s`, aliceKeyAuth)},
+				{name: "time_window_month_out_of_range", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window="month:0" %s`, aliceKeyAuth)},
+				{name: "time_window_dow_wrap_around", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window="dow:fri-mon" %s`, aliceKeyAuth)},
+				{name: "time_window_hour_wrap_around", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:22-6" %s`, aliceKeyAuth)},
+				{name: "time_window_invalid_timezone", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window="tz:Invalid/Zone" %s`, aliceKeyAuth)},
+				{name: "time_window_duplicate_constraint", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:9 hour:10" %s`, aliceKeyAuth)},
+				{name: "time_window_leading_comma", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window=",dow:mon" %s`, aliceKeyAuth)},
+				{name: "time_window_trailing_comma", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window="dow:mon," %s`, aliceKeyAuth)},
+				{name: "time_window_double_comma", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window="dow:mon,,dow:tue" %s`, aliceKeyAuth)},
+				{name: "time_window_negative_number", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:-1" %s`, aliceKeyAuth)},
+				{name: "time_window_non_integer", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:9.5" %s`, aliceKeyAuth)},
+				{name: "time_window_overflow", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:999999999999" %s`, aliceKeyAuth)},
+				{name: "time_window_empty_range_component", content: fmt.Sprintf(`permitconnect="*@example.com:22",time-window="hour:1//5" %s`, aliceKeyAuth)},
+				// Quote/line continuation edge cases
+				{name: "unterminated_quoted_string", content: fmt.Sprintf(`permitconnect="*@example.com:22 %s`, aliceKeyAuth)},
+				{name: "crlf_inside_quoted_string", content: fmt.Sprintf("permitconnect=\"*@example.com:22\",command=\"echo \r\ntest\" %s", aliceKeyAuth)},
+				{name: "trailing_backslash_at_eof", content: fmt.Sprintf(`permitconnect="*@example.com:22" %s\`, aliceKeyAuth)},
+				{name: "backslash_space_before_newline", content: fmt.Sprintf("permitconnect=\"*@example.com:22\" \\ \n%s", aliceKeyAuth)},
+				{name: "line_continuation_at_eof_without_key", content: `permitconnect="*@example.com:22" \`},
+				// Pipe edge cases
+				{name: "pipe_only", content: "|"},
+				{name: "pipe_whitespace_segments", content: `   |   |   `},
+				{name: "pipe_without_options", content: fmt.Sprintf(`%s | %s`, aliceKeyAuth, bobKeyAuth)},
+				{name: "options_on_non_first_pipe_segment", content: fmt.Sprintf(`permitconnect="*@example.com:22" %s | permitconnect="*@other.com:22" %s`, aliceKeyAuth, bobKeyAuth)},
+				{name: "invalid_key_in_pipe_segment", content: fmt.Sprintf(`permitconnect="*@example.com:22" %s | invalid`, aliceKeyAuth)},
+				{name: "invalid_key_in_middle_pipe_segment", content: fmt.Sprintf(`permitconnect="*@example.com:22" %s | invalid | %s`, aliceKeyAuth, bobKeyAuth)},
+				// Macro edge cases
+				{
+					name: "define_without_whitespace_separator",
+					content: `
+					#defineX MACRO value
+					permitconnect="*@example.com:22" MACRO
+					`,
+				},
+				{
+					name: "macro_name_leading_digit",
+					content: fmt.Sprintf(`
+					#define ALICE_KEY %s
+					#define 1BAD_KEY %s
+					permitconnect="*@example.com:22" 1BAD_KEY
+					`, aliceKeyAuth, bobKeyAuth),
+				},
+				{
+					name: "macro_name_non_ascii",
+					content: fmt.Sprintf(`
+					#define ALICE_KEY %s
+					#define BÄD_KEY %s
+					permitconnect="*@example.com:22" BÄD_KEY
+					`, aliceKeyAuth, bobKeyAuth),
+				},
+				{
+					name: "self_referential_macro",
+					content: fmt.Sprintf(`
+					#define ALICE_KEY %s
+					#define INFINITE INFINITE
+					permitconnect="*@example.com:22" INFINITE
+					`, aliceKeyAuth),
+				},
+				{
+					name: "self_referential_macro_in_quoted_value",
+					content: fmt.Sprintf(`
+					#define ALICE_KEY %s
+					#define INFINITE INFINITE
+					permitconnect="INFINITE" ALICE_KEY
+					`, aliceKeyAuth),
+				},
+				{
+					name: "mutually_recursive_macros",
+					content: `
+					#define A B
+					#define B A
+					permitconnect="*@example.com:22" A
+					`,
+				},
+				{
+					name: "macro_recursion_exceeding_depth",
+					content: fmt.Sprintf(`
+					#define ALICE_KEY %s
+					#define L0 L1
+					#define L1 L2
+					#define L2 L3
+					#define L3 L4
+					#define L4 L5
+					#define L5 L6
+					#define L6 L7
+					#define L7 L8
+					#define L8 L9
+					#define L9 ALICE_KEY
+					permitconnect="*@example.com:22" L0
+					`, aliceKeyAuth),
+				},
+				// Null byte cases
+				{name: "null_byte_only", content: "\x00"},
+				{name: "null_byte_in_key_data", content: "permitconnect=\"*@example.com:22\" ssh-ed25519 AAAA\x00AAAA comment"},
+			}
+
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					db, err := parseAuthorizedKeys([]byte(tt.content))
+					if err != nil {
+						t.Fatalf("parseAuthorizedKeys returned error: %v", err)
+					}
+					if len(db) != 0 {
+						t.Errorf("expected empty db, got %d keys", len(db))
+					}
+				})
+			}
+		})
 	})
 
 	t.Run("authorized_keys_watcher", func(t *testing.T) {
