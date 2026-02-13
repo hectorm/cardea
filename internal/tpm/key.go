@@ -238,7 +238,11 @@ func loadKeyBlob(t transport.TPM, blob *KeyBlob, opts *KeyOptions) (tpm2.AuthHan
 		return tpm2.AuthHandle{}, nil, err
 	}
 
-	if len(blob.Name.Buffer) != 0 && !bytes.Equal(blob.Name.Buffer, loadResp.Name.Buffer) {
+	if len(blob.Name.Buffer) == 0 {
+		flushContext(t, loadResp.ObjectHandle)
+		return tpm2.AuthHandle{}, nil, fmt.Errorf("key blob missing name")
+	}
+	if !bytes.Equal(blob.Name.Buffer, loadResp.Name.Buffer) {
 		flushContext(t, loadResp.ObjectHandle)
 		return tpm2.AuthHandle{}, nil, fmt.Errorf("key blob name mismatch")
 	}
