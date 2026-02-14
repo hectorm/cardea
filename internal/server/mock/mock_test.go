@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"io"
 	"log/slog"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -168,6 +169,60 @@ func TestMockSSHServer(t *testing.T) {
 
 		buffer := make([]byte, len(data))
 		if _, err = io.ReadFull(channel, buffer); err != nil {
+			t.Errorf("failed to read echoed data: %v", err)
+			return
+		} else if string(buffer) != data {
+			t.Errorf("expected echoed data %q, got %q", data, string(buffer))
+			return
+		}
+	})
+
+	t.Run("tcpip_forward", func(t *testing.T) {
+		srv, err := setupServer(t, WithPublicKeyCallback(AlwaysAllowPublicKey))
+		if err != nil {
+			t.Errorf("failed to setup server: %v", err)
+			return
+		}
+
+		conn, err := connectToServer(t, cli, srv)
+		if err != nil {
+			t.Errorf("failed to connect to server: %v", err)
+			return
+		}
+
+		listener, err := conn.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Errorf("failed to request tcpip forward: %v", err)
+			return
+		}
+		defer func() { _ = listener.Close() }()
+
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			c, err := net.Dial("tcp", listener.Addr().String())
+			if err != nil {
+				return
+			}
+			defer func() { _ = c.Close() }()
+			_, _ = io.Copy(c, c)
+		}()
+
+		acceptedConn, err := listener.Accept()
+		if err != nil {
+			t.Errorf("failed to accept connection: %v", err)
+			return
+		}
+		defer func() { _ = acceptedConn.Close() }()
+
+		data := "\x00\x01\x02\x03\xFF"
+
+		if _, err = acceptedConn.Write([]byte(data)); err != nil {
+			t.Errorf("failed to write data: %v", err)
+			return
+		}
+
+		buffer := make([]byte, len(data))
+		if _, err = io.ReadFull(acceptedConn, buffer); err != nil {
 			t.Errorf("failed to read echoed data: %v", err)
 			return
 		} else if string(buffer) != data {

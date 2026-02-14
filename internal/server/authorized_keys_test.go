@@ -17,13 +17,16 @@ func FuzzAuthorizedKeysParse(f *testing.F) {
 	f.Add(`permitconnect="user+host+22" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 
 	// Option combinations
-	f.Add(`permitconnect="user@host:22",permitopen="localhost:8080",permitlisten="localhost:9090",from="10.0.0.0/8" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",permitopen="localhost:8080",permitlisten="localhost:9090" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",permitsocketopen="/var/run/docker.sock",permitsocketlisten="/tmp/agent.sock" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 	f.Add(`permitconnect="user@host:22",environment="FOO=bar" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",from="10.0.0.0/8" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 	f.Add(`permitconnect="user@host:22",start-time="20060102150405Z",expiry-time="26660102150405Z" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 	f.Add(`permitconnect="user@host:22",time-window="dow:mon-fri hour:8-17 tz:Europe/Madrid" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 	f.Add(`permitconnect="user@host:22",time-window="dow:mon-thu hour:8-17 tz:Europe/Madrid",time-window="dow:fri hour:8-14 tz:Europe/Madrid" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 	f.Add(`permitconnect="user@host:22",time-window="hour:8-13/15-17 tz:Europe/Madrid" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
-	f.Add(`permitconnect="user@host:22",no-pty,no-port-forwarding ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",command="nologin" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",no-pty,no-port-forwarding,no-socket-forwarding,no-recording ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 	f.Add(`restrict,permitconnect="user@host:22" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 
 	// Preprocessor features
@@ -48,6 +51,20 @@ func FuzzAuthorizedKeysParse(f *testing.F) {
 	f.Add(`permitconnect="@host:22"`)
 	f.Add(`permitconnect="user@host:"`)
 
+	// Malformed permitopen and permitlisten
+	f.Add(`permitconnect="user@host:22",permitopen="" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",permitopen="noport" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",permitopen=":80" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",permitopen="host:" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",permitlisten="" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",permitlisten="noport" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",permitlisten=":8080" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",permitlisten="host:" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+
+	// Malformed permitsocketopen and permitsocketlisten
+	f.Add(`permitconnect="user@host:22",permitsocketopen="" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+	f.Add(`permitconnect="user@host:22",permitsocketlisten="" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
+
 	// Malformed environment
 	f.Add(`permitconnect="user@host:22",environment="" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 	f.Add(`permitconnect="user@host:22",environment="NOEQUALS" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
@@ -68,6 +85,9 @@ func FuzzAuthorizedKeysParse(f *testing.F) {
 	f.Add(`time-window="tz:Invalid/Zone",permitconnect="user@host:22"`)
 	f.Add(`time-window="dow:fri-mon",permitconnect="user@host:22"`)
 	f.Add(`time-window="hour:25",permitconnect="user@host:22"`)
+
+	// Malformed command
+	f.Add(`permitconnect="user@host:22",command="" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`)
 
 	// Malformed key
 	f.Add("permitconnect=\"user@host:22\" not-a-valid-key")
@@ -109,6 +129,18 @@ func FuzzAuthorizedKeysParse(f *testing.F) {
 				for _, pl := range opts.PermitListens {
 					if pl.Host == "" || pl.Port == "" {
 						t.Errorf("PermitListen has empty field: %+v", pl)
+					}
+				}
+
+				for _, pso := range opts.PermitSocketOpens {
+					if pso.Path == "" {
+						t.Errorf("PermitSocketOpen has empty path: %+v", pso)
+					}
+				}
+
+				for _, psl := range opts.PermitSocketListens {
+					if psl.Path == "" {
+						t.Errorf("PermitSocketListen has empty path: %+v", psl)
 					}
 				}
 

@@ -1815,6 +1815,66 @@ func TestBastionSSHServer(t *testing.T) {
 		}
 	})
 
+	t.Run("direct_streamlocal_channel", func(t *testing.T) {
+		cli, cliPublicKey, err := setupClient(t)
+		if err != nil {
+			t.Errorf("failed to setup client: %v", err)
+			return
+		}
+		cli.User = fmt.Sprintf("alice@%s", mockAddr)
+		cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
+
+		bastionSrv, err := setupBastionServer(t,
+			fmt.Sprintf(`permitconnect="alice@%s",permitsocketopen="*",command="nologin" %s`, mockAddr, cliAuthorizedKeyStr),
+			fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+		)
+		if err != nil {
+			t.Errorf("failed to setup bastion server: %v", err)
+			return
+		}
+
+		bastionConn, err := connectToServer(t, cli, bastionSrv)
+		if err != nil {
+			t.Errorf("failed to connect to server: %v", err)
+			return
+		}
+
+		payload := struct {
+			SocketPath string
+			Reserved0  string
+			Reserved1  uint32
+		}{
+			SocketPath: "/tmp/test.sock",
+			Reserved0:  "",
+			Reserved1:  0,
+		}
+
+		channel, requests, err := bastionConn.OpenChannel("direct-streamlocal@openssh.com", ssh.Marshal(payload))
+		if err != nil {
+			t.Errorf("failed to open direct-streamlocal@openssh.com channel: %v", err)
+			return
+		}
+		defer func() { _ = channel.Close() }()
+
+		go ssh.DiscardRequests(requests)
+
+		data := "\x00\x01\x02\x03\xFF"
+
+		if _, err = channel.Write([]byte(data)); err != nil {
+			t.Errorf("failed to write data: %v", err)
+			return
+		}
+
+		buffer := make([]byte, len(data))
+		if _, err = io.ReadFull(channel, buffer); err != nil {
+			t.Errorf("failed to read echoed data: %v", err)
+			return
+		} else if string(buffer) != data {
+			t.Errorf("expected echoed data %q, got %q", data, string(buffer))
+			return
+		}
+	})
+
 	t.Run("unsupported_channel", func(t *testing.T) {
 		cli, cliPublicKey, err := setupClient(t)
 		if err != nil {
@@ -1873,6 +1933,7 @@ func TestBastionSSHServer(t *testing.T) {
 			channel string
 		}{
 			{channel: "direct-tcpip"},
+			{channel: "direct-streamlocal@openssh.com"},
 		}
 
 		for _, tt := range tests {
@@ -2142,7 +2203,7 @@ func TestBastionSSHServer(t *testing.T) {
 		carolKeyStr := string(carolKey.Marshal())
 		carolKeyAuth := marshalAuthorizedKey(carolKey)
 
-		defaultPermitOpens := []PermitOpen{
+		defaultPermitOpens := []PermitTCP{
 			{Host: "localhost", Port: "1-65535"},
 			{Host: "127.0.0.1/8", Port: "1-65535"},
 			{Host: "::1/128", Port: "1-65535"},
@@ -2380,6 +2441,8 @@ func TestBastionSSHServer(t *testing.T) {
 				permitconnect="*@multi-decl-1.example.com:22",permitconnect="*@multi-decl-2.example.com:22",\
 				permitopen="*:80",permitopen="*:443",\
 				permitlisten="localhost:8080",permitlisten="localhost:9090",\
+				permitsocketopen="/tmp/first.sock",permitsocketopen="/tmp/last.sock",\
+				permitsocketlisten="/tmp/first.sock",permitsocketlisten="/tmp/last.sock",\
 				environment="FOO=bar",environment="BAZ=quux",\
 				from="10.0.0.0/8",from="172.16.0.0/12",\
 				start-time="20060101Z",start-time="20060102Z",\
@@ -2387,6 +2450,7 @@ func TestBastionSSHServer(t *testing.T) {
 				time-window="dow:mon-thu hour:8-17 tz:Europe/Madrid",time-window="dow:fri hour:8-14 tz:Europe/Madrid",\
 				command="first",command="last",\
 				no-port-forwarding,port-forwarding,\
+				no-socket-forwarding,socket-forwarding,\
 				no-pty,pty,\
 				no-recording,recording \
 				ALICE_KEY
@@ -2591,13 +2655,21 @@ func TestBastionSSHServer(t *testing.T) {
 								{User: "*", Host: "multi-decl-1.example.com", Port: "22"},
 								{User: "*", Host: "multi-decl-2.example.com", Port: "22"},
 							},
-							PermitOpens: []PermitOpen{
+							PermitOpens: []PermitTCP{
 								{Host: "*", Port: "80"},
 								{Host: "*", Port: "443"},
 							},
-							PermitListens: []PermitListen{
+							PermitListens: []PermitTCP{
 								{Host: "localhost", Port: "8080"},
 								{Host: "localhost", Port: "9090"},
+							},
+							PermitSocketOpens: []PermitSocket{
+								{Path: "/tmp/first.sock"},
+								{Path: "/tmp/last.sock"},
+							},
+							PermitSocketListens: []PermitSocket{
+								{Path: "/tmp/first.sock"},
+								{Path: "/tmp/last.sock"},
 							},
 							Environments: []Environment{
 								{Name: "FOO", Value: "bar"},
@@ -2610,17 +2682,19 @@ func TestBastionSSHServer(t *testing.T) {
 								tw, _ := timewindow.Parse("dow:mon-thu hour:8-17 tz:Europe/Madrid,dow:fri hour:8-14 tz:Europe/Madrid")
 								return tw
 							}(),
-							Command:          "last",
-							NoPortForwarding: false,
-							NoPty:            false,
-							NoRecording:      false,
+							Command:            "last",
+							NoPortForwarding:   false,
+							NoSocketForwarding: false,
+							NoPty:              false,
+							NoRecording:        false,
 						},
 						// [T52]
 						{
-							PermitConnects:   []PermitConnect{{User: "*", Host: "restrict.example.com", Port: "22"}},
-							PermitOpens:      defaultPermitOpens,
-							NoPortForwarding: true,
-							NoPty:            true,
+							PermitConnects:     []PermitConnect{{User: "*", Host: "restrict.example.com", Port: "22"}},
+							PermitOpens:        defaultPermitOpens,
+							NoPortForwarding:   true,
+							NoSocketForwarding: true,
+							NoPty:              true,
 						},
 					},
 					bobKeyStr: {
@@ -2654,7 +2728,7 @@ func TestBastionSSHServer(t *testing.T) {
 						// [T15]
 						{
 							PermitConnects: []PermitConnect{{User: "*", Host: "line-cont-lf.example.com", Port: "22"}},
-							PermitOpens: []PermitOpen{
+							PermitOpens: []PermitTCP{
 								{Host: "*", Port: "80"},
 								{Host: "*", Port: "443"},
 							},
@@ -2710,7 +2784,7 @@ func TestBastionSSHServer(t *testing.T) {
 						// [T49]
 						{
 							PermitConnects: []PermitConnect{{User: "*", Host: "multi-option.example.com", Port: "22"}},
-							PermitOpens:    []PermitOpen{{Host: "multi-option.example.com", Port: "80"}},
+							PermitOpens:    []PermitTCP{{Host: "multi-option.example.com", Port: "80"}},
 						},
 						// [T50]
 						{
@@ -2719,17 +2793,18 @@ func TestBastionSSHServer(t *testing.T) {
 						},
 						// [T53]
 						{
-							PermitConnects:   []PermitConnect{{User: "*", Host: "restrict-override.example.com", Port: "22"}},
-							PermitOpens:      defaultPermitOpens,
-							NoPortForwarding: false,
-							NoPty:            false,
+							PermitConnects:     []PermitConnect{{User: "*", Host: "restrict-override.example.com", Port: "22"}},
+							PermitOpens:        defaultPermitOpens,
+							NoPortForwarding:   false,
+							NoSocketForwarding: true,
+							NoPty:              false,
 						},
 					},
 					carolKeyStr: {
 						// [T3]
 						{
 							PermitConnects: []PermitConnect{{User: "*", Host: "permitopen.example.com", Port: "22"}},
-							PermitOpens: []PermitOpen{
+							PermitOpens: []PermitTCP{
 								{Host: "*", Port: "80"},
 								{Host: "*", Port: "443"},
 							},
@@ -2744,7 +2819,7 @@ func TestBastionSSHServer(t *testing.T) {
 						{
 							PermitConnects: []PermitConnect{{User: "*", Host: "permitlisten.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
-							PermitListens:  []PermitListen{{Host: "localhost", Port: "8080"}},
+							PermitListens:  []PermitTCP{{Host: "localhost", Port: "8080"}},
 						},
 						// [T12]
 						{
@@ -2757,7 +2832,7 @@ func TestBastionSSHServer(t *testing.T) {
 						// [T16]
 						{
 							PermitConnects: []PermitConnect{{User: "*", Host: "line-cont-crlf.example.com", Port: "22"}},
-							PermitOpens: []PermitOpen{
+							PermitOpens: []PermitTCP{
 								{Host: "*", Port: "80"},
 								{Host: "*", Port: "443"},
 							},
@@ -2855,6 +2930,28 @@ func TestBastionSSHServer(t *testing.T) {
 								return
 							}
 						}
+						if len(opts.PermitSocketOpens) != len(expectedOpts.PermitSocketOpens) {
+							t.Errorf("expected %d permitsocketopens for key, got %d", len(expectedOpts.PermitSocketOpens), len(opts.PermitSocketOpens))
+							return
+						}
+						for j, pso := range opts.PermitSocketOpens {
+							expectedPSO := expectedOpts.PermitSocketOpens[j]
+							if pso.Path != expectedPSO.Path {
+								t.Errorf("expected permitsocketopen %v for key, got %v", expectedPSO, pso)
+								return
+							}
+						}
+						if len(opts.PermitSocketListens) != len(expectedOpts.PermitSocketListens) {
+							t.Errorf("expected %d permitsocketlistens for key, got %d", len(expectedOpts.PermitSocketListens), len(opts.PermitSocketListens))
+							return
+						}
+						for j, psl := range opts.PermitSocketListens {
+							expectedPSL := expectedOpts.PermitSocketListens[j]
+							if psl.Path != expectedPSL.Path {
+								t.Errorf("expected permitsocketlisten %v for key, got %v", expectedPSL, psl)
+								return
+							}
+						}
 						if len(opts.Environments) != len(expectedOpts.Environments) {
 							t.Errorf("expected %d environments for key, got %d", len(expectedOpts.Environments), len(opts.Environments))
 							return
@@ -2919,6 +3016,10 @@ func TestBastionSSHServer(t *testing.T) {
 							t.Errorf("expected no-port-forwarding %t for key, got %t", expectedOpts.NoPortForwarding, opts.NoPortForwarding)
 							return
 						}
+						if opts.NoSocketForwarding != expectedOpts.NoSocketForwarding {
+							t.Errorf("expected no-socket-forwarding %t for key, got %t", expectedOpts.NoSocketForwarding, opts.NoSocketForwarding)
+							return
+						}
 						if opts.NoPty != expectedOpts.NoPty {
 							t.Errorf("expected no-pty %t for key, got %t", expectedOpts.NoPty, opts.NoPty)
 							return
@@ -2973,6 +3074,12 @@ func TestBastionSSHServer(t *testing.T) {
 				{name: "permitlisten_missing_host", content: fmt.Sprintf(`permitconnect="*@example.com:22",permitlisten=":22" %s`, aliceKeyAuth)},
 				{name: "permitlisten_missing_port", content: fmt.Sprintf(`permitconnect="*@example.com:22",permitlisten="host:" %s`, aliceKeyAuth)},
 				{name: "permitlisten_exceeding_length", content: fmt.Sprintf(`permitconnect="*@example.com:22",permitlisten="%s:22" %s`, strings.Repeat("a", 550), aliceKeyAuth)},
+				// Invalid permitsocketopen
+				{name: "permitsocketopen_empty", content: fmt.Sprintf(`permitconnect="*@example.com:22",permitsocketopen="" %s`, aliceKeyAuth)},
+				{name: "permitsocketopen_exceeding_length", content: fmt.Sprintf(`permitconnect="*@example.com:22",permitsocketopen="/%s" %s`, strings.Repeat("a", 550), aliceKeyAuth)},
+				// Invalid permitsocketlisten
+				{name: "permitsocketlisten_empty", content: fmt.Sprintf(`permitconnect="*@example.com:22",permitsocketlisten="" %s`, aliceKeyAuth)},
+				{name: "permitsocketlisten_exceeding_length", content: fmt.Sprintf(`permitconnect="*@example.com:22",permitsocketlisten="/%s" %s`, strings.Repeat("a", 550), aliceKeyAuth)},
 				// Invalid environment
 				{name: "environment_empty", content: fmt.Sprintf(`permitconnect="*@example.com:22",environment="" %s`, aliceKeyAuth)},
 				{name: "environment_missing_equals", content: fmt.Sprintf(`permitconnect="*@example.com:22",environment="NOEQUALS" %s`, aliceKeyAuth)},
@@ -4557,6 +4664,10 @@ func TestBastionSSHServer(t *testing.T) {
 					"cardea_port_forwards_local_total",
 					"cardea_port_forwards_remote_active",
 					"cardea_port_forwards_remote_total",
+					"cardea_socket_forwards_local_active",
+					"cardea_socket_forwards_local_total",
+					"cardea_socket_forwards_remote_active",
+					"cardea_socket_forwards_remote_total",
 					"cardea_received_bytes_total",
 					"cardea_sent_bytes_total",
 					"cardea_auth_successes_total",

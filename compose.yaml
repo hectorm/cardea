@@ -156,28 +156,26 @@ configs:
         },
         "panels": [
           {
-            "title": "Active connections", "type": "stat",
-            "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+            "title": "Active connections and sessions", "type": "stat",
+            "gridPos": { "h": 4, "w": 12, "x": 0, "y": 0 },
             "datasource": { "type": "prometheus", "uid": "prometheus" },
-            "targets": [{ "expr": "sum(cardea_connections_active{instance=~\"$$instance\"})", "refId": "A" }]
+            "options": { "graphMode": "none", "textMode": "value_and_name", "wideLayout": false, "justifyMode": "center" },
+            "targets": [
+              { "expr": "sum(cardea_connections_active{instance=~\"$$instance\"})", "legendFormat": "Connections", "refId": "A" },
+              { "expr": "sum(cardea_sessions_active{instance=~\"$$instance\"})", "legendFormat": "Sessions", "refId": "B" }
+            ]
           },
           {
-            "title": "Active sessions", "type": "stat",
-            "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+            "title": "Active forwards", "type": "stat",
+            "gridPos": { "h": 4, "w": 12, "x": 12, "y": 0 },
             "datasource": { "type": "prometheus", "uid": "prometheus" },
-            "targets": [{ "expr": "sum(cardea_sessions_active{instance=~\"$$instance\"})", "refId": "A" }]
-          },
-          {
-            "title": "Active local port forwards", "type": "stat",
-            "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
-            "datasource": { "type": "prometheus", "uid": "prometheus" },
-            "targets": [{ "expr": "sum(cardea_port_forwards_local_active{instance=~\"$$instance\"})", "refId": "A" }]
-          },
-          {
-            "title": "Active remote port forwards", "type": "stat",
-            "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
-            "datasource": { "type": "prometheus", "uid": "prometheus" },
-            "targets": [{ "expr": "sum(cardea_port_forwards_remote_active{instance=~\"$$instance\"})", "refId": "A" }]
+            "options": { "graphMode": "none", "textMode": "value_and_name", "wideLayout": false, "justifyMode": "center" },
+            "targets": [
+              { "expr": "sum(cardea_port_forwards_local_active{instance=~\"$$instance\"})", "legendFormat": "Local port", "refId": "A" },
+              { "expr": "sum(cardea_port_forwards_remote_active{instance=~\"$$instance\"})", "legendFormat": "Remote port", "refId": "B" },
+              { "expr": "sum(cardea_socket_forwards_local_active{instance=~\"$$instance\"})", "legendFormat": "Local socket", "refId": "C" },
+              { "expr": "sum(cardea_socket_forwards_remote_active{instance=~\"$$instance\"})", "legendFormat": "Remote socket", "refId": "D" }
+            ]
           },
           {
             "title": "Connections and sessions", "type": "timeseries",
@@ -219,7 +217,7 @@ configs:
           },
           {
             "title": "Port forwards", "type": "timeseries",
-            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+            "gridPos": { "h": 8, "w": 8, "x": 0, "y": 20 },
             "datasource": { "type": "prometheus", "uid": "prometheus" },
             "targets": [
               { "expr": "cardea_port_forwards_local_active{instance=~\"$$instance\"}", "legendFormat": "Local active ({{instance}})", "refId": "A" },
@@ -229,8 +227,19 @@ configs:
             ]
           },
           {
+            "title": "Socket forwards", "type": "timeseries",
+            "gridPos": { "h": 8, "w": 8, "x": 8, "y": 20 },
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "targets": [
+              { "expr": "cardea_socket_forwards_local_active{instance=~\"$$instance\"}", "legendFormat": "Local active ({{instance}})", "refId": "A" },
+              { "expr": "cardea_socket_forwards_remote_active{instance=~\"$$instance\"}", "legendFormat": "Remote active ({{instance}})", "refId": "B" },
+              { "expr": "rate(cardea_socket_forwards_local_total{instance=~\"$$instance\"}[1m])", "legendFormat": "Local/s ({{instance}})", "refId": "C" },
+              { "expr": "rate(cardea_socket_forwards_remote_total{instance=~\"$$instance\"}[1m])", "legendFormat": "Remote/s ({{instance}})", "refId": "D" }
+            ]
+          },
+          {
             "title": "Rate limiting", "type": "timeseries",
-            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+            "gridPos": { "h": 8, "w": 8, "x": 16, "y": 20 },
             "datasource": { "type": "prometheus", "uid": "prometheus" },
             "targets": [
               { "expr": "rate(cardea_rate_limit_rejections_total{instance=~\"$$instance\"}[1m])", "legendFormat": "Rejections/s ({{instance}})", "refId": "A" }

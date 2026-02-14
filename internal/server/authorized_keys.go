@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,25 +19,28 @@ const (
 	maxInputSize            = 1024 * 1024 // 1MB
 	maxLineLength           = 64 * 1024   // 64KB
 	maxPermitConnectLength  = 1024
-	maxPermitOpenLength     = 512
-	maxPermitListenLength   = 512
+	maxPermitTCPLength      = 512
+	maxPermitSocketLength   = 512
 	maxMacroExpansionDepth  = 10
 	maxMacroExpansionTokens = 16 * 1024
 )
 
 type AuthorizedKeyOptions struct {
-	PermitConnects   []PermitConnect        `json:"permit_connects"`
-	PermitOpens      []PermitOpen           `json:"permit_opens"`
-	PermitListens    []PermitListen         `json:"permit_listens"`
-	Environments     []Environment          `json:"environments"`
-	Froms            []string               `json:"froms"`
-	StartTime        *time.Time             `json:"start_time"`
-	ExpiryTime       *time.Time             `json:"expiry_time"`
-	TimeWindow       *timewindow.TimeWindow `json:"time_window"`
-	Command          string                 `json:"command"`
-	NoPortForwarding bool                   `json:"no_port_forwarding"`
-	NoPty            bool                   `json:"no_pty"`
-	NoRecording      bool                   `json:"no_recording"`
+	PermitConnects      []PermitConnect        `json:"permit_connects"`
+	PermitOpens         []PermitTCP            `json:"permit_opens"`
+	PermitListens       []PermitTCP            `json:"permit_listens"`
+	PermitSocketOpens   []PermitSocket         `json:"permit_socket_opens"`
+	PermitSocketListens []PermitSocket         `json:"permit_socket_listens"`
+	Environments        []Environment          `json:"environments"`
+	Froms               []string               `json:"froms"`
+	StartTime           *time.Time             `json:"start_time"`
+	ExpiryTime          *time.Time             `json:"expiry_time"`
+	TimeWindow          *timewindow.TimeWindow `json:"time_window"`
+	Command             string                 `json:"command"`
+	NoPortForwarding    bool                   `json:"no_port_forwarding"`
+	NoSocketForwarding  bool                   `json:"no_socket_forwarding"`
+	NoPty               bool                   `json:"no_pty"`
+	NoRecording         bool                   `json:"no_recording"`
 }
 
 type PermitConnect struct {
@@ -45,14 +49,13 @@ type PermitConnect struct {
 	Port string `json:"port"`
 }
 
-type PermitOpen struct {
+type PermitTCP struct {
 	Host string `json:"host"`
 	Port string `json:"port"`
 }
 
-type PermitListen struct {
-	Host string `json:"host"`
-	Port string `json:"port"`
+type PermitSocket struct {
+	Path string `json:"path"`
 }
 
 type Environment struct {
@@ -144,30 +147,42 @@ func parseOptions(opts []string) (*AuthorizedKeyOptions, error) {
 			for v := range strings.SplitSeq(val, ",") {
 				permitconnect, err := parsePermitConnect(strings.TrimSpace(v))
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("invalid permitconnect: %w", err)
 				}
 				authKeyOpts.PermitConnects = append(authKeyOpts.PermitConnects, *permitconnect)
 			}
 		case "permitopen":
 			for v := range strings.SplitSeq(val, ",") {
-				permitopen, err := parsePermitOpen(strings.TrimSpace(v))
+				permitopen, err := parsePermitTCP(strings.TrimSpace(v))
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("invalid permitopen: %w", err)
 				}
 				authKeyOpts.PermitOpens = append(authKeyOpts.PermitOpens, *permitopen)
 			}
 		case "permitlisten":
 			for v := range strings.SplitSeq(val, ",") {
-				permitlisten, err := parsePermitListen(strings.TrimSpace(v))
+				permitlisten, err := parsePermitTCP(strings.TrimSpace(v))
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("invalid permitlisten: %w", err)
 				}
 				authKeyOpts.PermitListens = append(authKeyOpts.PermitListens, *permitlisten)
 			}
+		case "permitsocketopen":
+			permitsocketopen, err := parsePermitSocket(strings.TrimSpace(val))
+			if err != nil {
+				return nil, fmt.Errorf("invalid permitsocketopen: %w", err)
+			}
+			authKeyOpts.PermitSocketOpens = append(authKeyOpts.PermitSocketOpens, *permitsocketopen)
+		case "permitsocketlisten":
+			permitsocketlisten, err := parsePermitSocket(strings.TrimSpace(val))
+			if err != nil {
+				return nil, fmt.Errorf("invalid permitsocketlisten: %w", err)
+			}
+			authKeyOpts.PermitSocketListens = append(authKeyOpts.PermitSocketListens, *permitsocketlisten)
 		case "environment":
 			environment, err := parseEnvironment(val)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("invalid environment: %w", err)
 			}
 			authKeyOpts.Environments = append(authKeyOpts.Environments, *environment)
 		case "from":
@@ -206,12 +221,17 @@ func parseOptions(opts []string) (*AuthorizedKeyOptions, error) {
 			authKeyOpts.NoPortForwarding = false
 		case "no-port-forwarding":
 			authKeyOpts.NoPortForwarding = true
+		case "socket-forwarding":
+			authKeyOpts.NoSocketForwarding = false
+		case "no-socket-forwarding":
+			authKeyOpts.NoSocketForwarding = true
 		case "pty":
 			authKeyOpts.NoPty = false
 		case "no-pty":
 			authKeyOpts.NoPty = true
 		case "restrict":
 			authKeyOpts.NoPortForwarding = true
+			authKeyOpts.NoSocketForwarding = true
 			authKeyOpts.NoPty = true
 		case "recording":
 			authKeyOpts.NoRecording = false
@@ -225,7 +245,7 @@ func parseOptions(opts []string) (*AuthorizedKeyOptions, error) {
 	}
 
 	if len(authKeyOpts.PermitOpens) == 0 {
-		authKeyOpts.PermitOpens = []PermitOpen{
+		authKeyOpts.PermitOpens = []PermitTCP{
 			{Host: "localhost", Port: "1-65535"},
 			{Host: "127.0.0.1/8", Port: "1-65535"},
 			{Host: "::1/128", Port: "1-65535"},
@@ -306,57 +326,67 @@ func parsePermitConnect(permitconnect string) (*PermitConnect, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("invalid permitconnect format, expected <user>@<host>[:<port>] or <user>+<host>[+<port>], got %s", permitconnect)
+	return nil, fmt.Errorf("expected <user>@<host>[:<port>] or <user>+<host>[+<port>], got %s", permitconnect)
 }
 
-func parsePermitOpen(permitopen string) (*PermitOpen, error) {
-	if permitopen != "" && len(permitopen) <= maxPermitOpenLength {
-		host, port, err := net.SplitHostPort(permitopen)
-		if err == nil && host != "" && port != "" {
-			return &PermitOpen{Host: host, Port: port}, nil
-		}
+func parsePermitTCP(s string) (*PermitTCP, error) {
+	if s == "" {
+		return nil, fmt.Errorf("empty value")
+	}
+	if len(s) > maxPermitTCPLength {
+		return nil, fmt.Errorf("exceeds maximum length of %d", maxPermitTCPLength)
 	}
 
-	return nil, fmt.Errorf("invalid permitopen format, expected <host>:<port>, got %s", permitopen)
+	host, port, err := net.SplitHostPort(s)
+	if err != nil || host == "" || port == "" {
+		return nil, fmt.Errorf("expected <host>:<port>, got %s", s)
+	}
+
+	return &PermitTCP{Host: host, Port: port}, nil
 }
 
-func parsePermitListen(permitlisten string) (*PermitListen, error) {
-	if permitlisten != "" && len(permitlisten) <= maxPermitListenLength {
-		host, port, err := net.SplitHostPort(permitlisten)
-		if err == nil && host != "" && port != "" {
-			return &PermitListen{Host: host, Port: port}, nil
-		}
+func parsePermitSocket(s string) (*PermitSocket, error) {
+	if s == "" {
+		return nil, fmt.Errorf("empty value")
+	}
+	if len(s) > maxPermitSocketLength {
+		return nil, fmt.Errorf("exceeds maximum length of %d", maxPermitSocketLength)
 	}
 
-	return nil, fmt.Errorf("invalid permitlisten format, expected <host>:<port>, got %s", permitlisten)
+	if s == "*" {
+		return &PermitSocket{Path: s}, nil
+	}
+
+	s = path.Clean(s)
+	return &PermitSocket{Path: s}, nil
 }
 
 func parseEnvironment(s string) (*Environment, error) {
 	if len(s) > 0 && (s[0] == '+' || s[0] == '-') {
 		pattern := s[1:]
 		if pattern == "" {
-			return nil, fmt.Errorf("empty environment pattern")
+			return nil, fmt.Errorf("empty pattern")
 		}
 		for _, c := range pattern {
 			if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '*' || c == '?' || c == '[' || c == ']') {
-				return nil, fmt.Errorf("invalid environment pattern %q", pattern)
+				return nil, fmt.Errorf("pattern %q contains disallowed characters", pattern)
 			}
 		}
-		if _, err := filepath.Match(pattern, ""); err != nil {
-			return nil, fmt.Errorf("invalid environment pattern %q: %w", pattern, err)
+		if _, err := path.Match(pattern, ""); err != nil {
+			return nil, fmt.Errorf("pattern %q is malformed: %w", pattern, err)
 		}
 		return &Environment{Sign: string(s[0]), Name: pattern}, nil
 	}
 
 	i := strings.IndexByte(s, '=')
 	if i < 1 {
-		return nil, fmt.Errorf("invalid environment format, expected NAME=value, got %s", s)
+		return nil, fmt.Errorf("expected NAME=value, got %s", s)
 	}
 
 	name := s[:i]
 	for _, c := range name {
 		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_') {
-			return nil, fmt.Errorf("invalid environment variable name %q", name)
+			return nil, fmt.Errorf("variable name %q contains disallowed characters", name)
 		}
 	}
 

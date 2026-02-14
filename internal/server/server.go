@@ -12,6 +12,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -411,6 +412,12 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 						slog.Error("tcpip-forward error", "error", err)
 					}
 				}()
+			case "streamlocal-forward@openssh.com", "cancel-streamlocal-forward@openssh.com":
+				go func() {
+					if err := srv.handleStreamLocalForward(backendConn, &authKeyOpts, req); err != nil {
+						slog.Error("streamlocal-forward error", "error", err)
+					}
+				}()
 			case "keepalive@openssh.com":
 				if req.WantReply {
 					_ = req.Reply(false, nil)
@@ -440,6 +447,12 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 						slog.Error("direct-tcpip error", "error", err)
 					}
 				}()
+			case "direct-streamlocal@openssh.com":
+				go func() {
+					if err := srv.handleDirectStreamLocal(backendConn, &authKeyOpts, newChannel); err != nil {
+						slog.Error("direct-streamlocal error", "error", err)
+					}
+				}()
 			default:
 				slog.Warn("unsupported channel type", "type", newChannel.ChannelType())
 				_ = newChannel.Reject(ssh.UnknownChannelType, "unsupported channel type")
@@ -449,12 +462,31 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 
 	// Handle backend channels
 	go func() {
-		for newChannel := range backendConn.HandleChannelOpen("forwarded-tcpip") {
-			go func() {
-				if err := srv.handleForwardedTCPIP(frontendConn, &authKeyOpts, newChannel); err != nil {
-					slog.Error("forwarded-tcpip error", "error", err)
+		forwardedTCPIP := backendConn.HandleChannelOpen("forwarded-tcpip")
+		forwardedStreamLocal := backendConn.HandleChannelOpen("forwarded-streamlocal@openssh.com")
+		for forwardedTCPIP != nil || forwardedStreamLocal != nil {
+			select {
+			case newChannel, ok := <-forwardedTCPIP:
+				if !ok {
+					forwardedTCPIP = nil
+					continue
 				}
-			}()
+				go func() {
+					if err := srv.handleForwardedTCPIP(frontendConn, &authKeyOpts, newChannel); err != nil {
+						slog.Error("forwarded-tcpip error", "error", err)
+					}
+				}()
+			case newChannel, ok := <-forwardedStreamLocal:
+				if !ok {
+					forwardedStreamLocal = nil
+					continue
+				}
+				go func() {
+					if err := srv.handleForwardedStreamLocal(frontendConn, &authKeyOpts, newChannel); err != nil {
+						slog.Error("forwarded-streamlocal error", "error", err)
+					}
+				}()
+			}
 		}
 	}()
 
@@ -808,6 +840,27 @@ func (srv *Server) isNonInteractiveCommand(command string) bool {
 	return cmd == "rsync" || cmd == "git" || strings.HasPrefix(cmd, "git-")
 }
 
+func (srv *Server) isClientEnvAllowed(authKeyOpts *AuthorizedKeyOptions, name string) bool {
+	allowed := false
+	for _, env := range authKeyOpts.Environments {
+		switch env.Sign {
+		case "+":
+			if srv.matchNamePattern(env.Name, name) {
+				allowed = true
+			}
+		case "-":
+			if srv.matchNamePattern(env.Name, name) {
+				allowed = false
+			}
+		default:
+			if env.Name == name {
+				return false
+			}
+		}
+	}
+	return allowed
+}
+
 func (srv *Server) handleDirectTCPIP(backendConn *ssh.Client, authKeyOpts *AuthorizedKeyOptions, newChannel ssh.NewChannel) error {
 	if authKeyOpts.NoPortForwarding {
 		_ = newChannel.Reject(ssh.Prohibited, "port forwarding disabled")
@@ -854,29 +907,7 @@ func (srv *Server) handleDirectTCPIP(backendConn *ssh.Client, authKeyOpts *Autho
 	}
 	defer func() { _ = clientChannel.Close() }()
 
-	srv.metrics.PortForwardsLocalTotal.Add(1)
-	srv.metrics.PortForwardsLocalActive.Add(1)
-	defer srv.metrics.PortForwardsLocalActive.Add(-1)
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-		defer func() { _ = backendChannel.Close() }()
-		buf := bufferPool.Get()
-		defer bufferPool.Put(buf)
-		_, _ = io.CopyBuffer(backendChannel, clientChannel, buf.([]byte))
-	}()
-	go func() {
-		defer wg.Done()
-		defer func() { _ = clientChannel.Close() }()
-		buf := bufferPool.Get()
-		defer bufferPool.Put(buf)
-		_, _ = io.CopyBuffer(clientChannel, backendChannel, buf.([]byte))
-	}()
-
-	wg.Wait()
+	srv.relayChannels(backendChannel, clientChannel, &srv.metrics.PortForwardsLocalActive, &srv.metrics.PortForwardsLocalTotal)
 	return nil
 }
 
@@ -978,30 +1009,263 @@ func (srv *Server) handleForwardedTCPIP(frontendConn *ssh.ServerConn, authKeyOpt
 
 	go ssh.DiscardRequests(backendRequests)
 
-	srv.metrics.PortForwardsRemoteTotal.Add(1)
-	srv.metrics.PortForwardsRemoteActive.Add(1)
-	defer srv.metrics.PortForwardsRemoteActive.Add(-1)
+	srv.relayChannels(backendChannel, clientChannel, &srv.metrics.PortForwardsRemoteActive, &srv.metrics.PortForwardsRemoteTotal)
+	return nil
+}
+
+func (srv *Server) handleDirectStreamLocal(backendConn *ssh.Client, authKeyOpts *AuthorizedKeyOptions, newChannel ssh.NewChannel) error {
+	if authKeyOpts.NoSocketForwarding {
+		_ = newChannel.Reject(ssh.Prohibited, "socket forwarding disabled")
+		return nil
+	}
+
+	var payload struct {
+		SocketPath string
+		Reserved0  string
+		Reserved1  uint32
+	}
+	if err := ssh.Unmarshal(newChannel.ExtraData(), &payload); err != nil {
+		_ = newChannel.Reject(ssh.ConnectionFailed, "failed to parse payload")
+		return err
+	}
+
+	allowed := false
+	for _, pso := range authKeyOpts.PermitSocketOpens {
+		if srv.matchPathPattern(pso.Path, payload.SocketPath) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		_ = newChannel.Reject(ssh.Prohibited, "socket forwarding not permitted")
+		return nil
+	}
+
+	backendChannel, requests, err := backendConn.OpenChannel("direct-streamlocal@openssh.com", newChannel.ExtraData())
+	if err != nil {
+		_ = newChannel.Reject(ssh.ConnectionFailed, "internal error")
+		return err
+	}
+	defer func() { _ = backendChannel.Close() }()
+
+	go ssh.DiscardRequests(requests)
+
+	clientChannel, _, err := newChannel.Accept()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = clientChannel.Close() }()
+
+	srv.relayChannels(backendChannel, clientChannel, &srv.metrics.SocketForwardsLocalActive, &srv.metrics.SocketForwardsLocalTotal)
+	return nil
+}
+
+func (srv *Server) handleStreamLocalForward(backendConn *ssh.Client, authKeyOpts *AuthorizedKeyOptions, req *ssh.Request) error {
+	if authKeyOpts.NoSocketForwarding {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return nil
+	}
+
+	var payload struct {
+		SocketPath string
+	}
+	if err := ssh.Unmarshal(req.Payload, &payload); err != nil {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return err
+	}
+
+	allowed := false
+	for _, psl := range authKeyOpts.PermitSocketListens {
+		if srv.matchPathPattern(psl.Path, payload.SocketPath) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return nil
+	}
+
+	ok, response, err := backendConn.SendRequest(req.Type, req.WantReply, req.Payload)
+	if err != nil {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return err
+	}
+
+	if req.WantReply {
+		_ = req.Reply(ok, response)
+	}
+
+	return nil
+}
+
+func (srv *Server) handleForwardedStreamLocal(frontendConn *ssh.ServerConn, authKeyOpts *AuthorizedKeyOptions, newChannel ssh.NewChannel) error {
+	if authKeyOpts.NoSocketForwarding {
+		_ = newChannel.Reject(ssh.Prohibited, "socket forwarding disabled")
+		return nil
+	}
+
+	var payload struct {
+		SocketPath string
+		Reserved0  string
+	}
+	if err := ssh.Unmarshal(newChannel.ExtraData(), &payload); err != nil {
+		_ = newChannel.Reject(ssh.ConnectionFailed, "failed to parse payload")
+		return err
+	}
+
+	allowed := false
+	for _, psl := range authKeyOpts.PermitSocketListens {
+		if srv.matchPathPattern(psl.Path, payload.SocketPath) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		_ = newChannel.Reject(ssh.Prohibited, "socket forwarding not permitted")
+		return nil
+	}
+
+	clientChannel, clientRequests, err := frontendConn.OpenChannel("forwarded-streamlocal@openssh.com", newChannel.ExtraData())
+	if err != nil {
+		_ = newChannel.Reject(ssh.ConnectionFailed, "failed to open channel to client")
+		return err
+	}
+	defer func() { _ = clientChannel.Close() }()
+
+	go ssh.DiscardRequests(clientRequests)
+
+	backendChannel, backendRequests, err := newChannel.Accept()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = backendChannel.Close() }()
+
+	go ssh.DiscardRequests(backendRequests)
+
+	srv.relayChannels(backendChannel, clientChannel, &srv.metrics.SocketForwardsRemoteActive, &srv.metrics.SocketForwardsRemoteTotal)
+	return nil
+}
+
+func (srv *Server) relayChannels(ch1, ch2 ssh.Channel, activeMetric *atomic.Int64, totalMetric *atomic.Uint64) {
+	if totalMetric != nil {
+		totalMetric.Add(1)
+	}
+	if activeMetric != nil {
+		activeMetric.Add(1)
+		defer activeMetric.Add(-1)
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	go func() {
+	relay := func(dst, src ssh.Channel) {
 		defer wg.Done()
-		defer func() { _ = backendChannel.Close() }()
+		defer func() { _ = dst.Close() }()
 		buf := bufferPool.Get()
 		defer bufferPool.Put(buf)
-		_, _ = io.CopyBuffer(backendChannel, clientChannel, buf.([]byte))
-	}()
-	go func() {
-		defer wg.Done()
-		defer func() { _ = clientChannel.Close() }()
-		buf := bufferPool.Get()
-		defer bufferPool.Put(buf)
-		_, _ = io.CopyBuffer(clientChannel, backendChannel, buf.([]byte))
-	}()
+		_, _ = io.CopyBuffer(dst, src, buf.([]byte))
+	}
+
+	go relay(ch1, ch2)
+	go relay(ch2, ch1)
 
 	wg.Wait()
-	return nil
+}
+
+func (srv *Server) newFrontendConnection(tcpConn net.Conn) (*ssh.ServerConn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+	// Set a read deadline for the initial handshake to mitigate slowloris attacks
+	_ = tcpConn.SetReadDeadline(time.Now().Add(sshConnTimeout))
+	defer func() { _ = tcpConn.SetReadDeadline(time.Time{}) }()
+
+	// Set TCP_NODELAY to disable Nagle's algorithm for low-latency connections
+	if tcpConn, ok := tcpConn.(*net.TCPConn); ok {
+		if err := tcpConn.SetNoDelay(true); err != nil {
+			slog.Warn("failed to set TCP_NODELAY on client connection", "error", err)
+		}
+	}
+
+	countedConn := &countingConn{
+		Conn:         tcpConn,
+		bytesRead:    &srv.metrics.ReceivedBytesTotal,
+		bytesWritten: &srv.metrics.SentBytesTotal,
+	}
+
+	sshConn, channels, requests, err := ssh.NewServerConn(countedConn, srv.sshServerConfig)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return sshConn, channels, requests, nil
+}
+
+func (srv *Server) newBackendConnection(permitconnect *PermitConnect) (*ssh.Client, error) {
+	user, host, port := permitconnect.User, permitconnect.Host, permitconnect.Port
+	addr := net.JoinHostPort(host, port)
+
+	authMethod, err := srv.credentialProvider.GetAuthMethod(srv.ctx, user, host, port)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get auth method: %w", err)
+	}
+
+	dialer := &net.Dialer{Timeout: sshConnTimeout}
+	tcpConn, err := dialer.Dial("tcp", addr)
+	if err != nil {
+		switch {
+		case os.IsTimeout(err):
+			srv.metrics.BackendErrorsTimeoutTotal.Add(1)
+		case errors.Is(err, syscall.ECONNREFUSED) || strings.Contains(err.Error(), "refused"):
+			srv.metrics.BackendErrorsRefusedTotal.Add(1)
+		default:
+			srv.metrics.BackendErrorsOtherTotal.Add(1)
+		}
+		return nil, err
+	}
+
+	// Set a read deadline for the initial handshake to mitigate slowloris attacks
+	_ = tcpConn.SetReadDeadline(time.Now().Add(sshConnTimeout))
+	defer func() { _ = tcpConn.SetReadDeadline(time.Time{}) }()
+
+	// Set TCP_NODELAY to disable Nagle's algorithm for low-latency connections
+	if tcpConn, ok := tcpConn.(*net.TCPConn); ok {
+		if err := tcpConn.SetNoDelay(true); err != nil {
+			slog.Warn("failed to set TCP_NODELAY on backend connection", "error", err)
+		}
+	}
+
+	sshClientConfig := *srv.sshClientConfig
+	sshClientConfig.User = user
+	sshClientConfig.Auth = []ssh.AuthMethod{authMethod}
+
+	// Populate the client's host key algorithms from known_hosts if available
+	if algos, err := srv.hostKeyAlgorithms(addr); err == nil {
+		sshClientConfig.HostKeyAlgorithms = algos
+		slog.Debug("using host key algorithms from known_hosts", "host", addr, "algorithms", algos)
+	}
+
+	sshConn, chans, reqs, err := ssh.NewClientConn(tcpConn, addr, &sshClientConfig)
+	if err != nil {
+		_ = tcpConn.Close()
+		switch {
+		case os.IsTimeout(err):
+			srv.metrics.BackendErrorsTimeoutTotal.Add(1)
+		case strings.Contains(err.Error(), "unable to authenticate"):
+			srv.metrics.BackendErrorsFailedAuthTotal.Add(1)
+		case !errors.As(err, new(*knownhosts.KeyError)):
+			srv.metrics.BackendErrorsOtherTotal.Add(1)
+		}
+		return nil, err
+	}
+
+	return ssh.NewClient(sshConn, chans, reqs), nil
 }
 
 func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
@@ -1270,99 +1534,12 @@ func (srv *Server) bannerCallback(conn ssh.ConnMetadata) string {
 	return srv.banner
 }
 
-func (srv *Server) newFrontendConnection(tcpConn net.Conn) (*ssh.ServerConn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
-	// Set a read deadline for the initial handshake to mitigate slowloris attacks
-	_ = tcpConn.SetReadDeadline(time.Now().Add(sshConnTimeout))
-	defer func() { _ = tcpConn.SetReadDeadline(time.Time{}) }()
-
-	// Set TCP_NODELAY to disable Nagle's algorithm for low-latency connections
-	if tcpConn, ok := tcpConn.(*net.TCPConn); ok {
-		if err := tcpConn.SetNoDelay(true); err != nil {
-			slog.Warn("failed to set TCP_NODELAY on client connection", "error", err)
-		}
-	}
-
-	countedConn := &countingConn{
-		Conn:         tcpConn,
-		bytesRead:    &srv.metrics.ReceivedBytesTotal,
-		bytesWritten: &srv.metrics.SentBytesTotal,
-	}
-
-	sshConn, channels, requests, err := ssh.NewServerConn(countedConn, srv.sshServerConfig)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	return sshConn, channels, requests, nil
-}
-
-func (srv *Server) newBackendConnection(permitconnect *PermitConnect) (*ssh.Client, error) {
-	user, host, port := permitconnect.User, permitconnect.Host, permitconnect.Port
-	addr := net.JoinHostPort(host, port)
-
-	authMethod, err := srv.credentialProvider.GetAuthMethod(srv.ctx, user, host, port)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get auth method: %w", err)
-	}
-
-	dialer := &net.Dialer{Timeout: sshConnTimeout}
-	tcpConn, err := dialer.Dial("tcp", addr)
-	if err != nil {
-		switch {
-		case os.IsTimeout(err):
-			srv.metrics.BackendErrorsTimeoutTotal.Add(1)
-		case errors.Is(err, syscall.ECONNREFUSED) || strings.Contains(err.Error(), "refused"):
-			srv.metrics.BackendErrorsRefusedTotal.Add(1)
-		default:
-			srv.metrics.BackendErrorsOtherTotal.Add(1)
-		}
-		return nil, err
-	}
-
-	// Set a read deadline for the initial handshake to mitigate slowloris attacks
-	_ = tcpConn.SetReadDeadline(time.Now().Add(sshConnTimeout))
-	defer func() { _ = tcpConn.SetReadDeadline(time.Time{}) }()
-
-	// Set TCP_NODELAY to disable Nagle's algorithm for low-latency connections
-	if tcpConn, ok := tcpConn.(*net.TCPConn); ok {
-		if err := tcpConn.SetNoDelay(true); err != nil {
-			slog.Warn("failed to set TCP_NODELAY on backend connection", "error", err)
-		}
-	}
-
-	sshClientConfig := *srv.sshClientConfig
-	sshClientConfig.User = user
-	sshClientConfig.Auth = []ssh.AuthMethod{authMethod}
-
-	// Populate the client's host key algorithms from known_hosts if available
-	if algos, err := srv.hostKeyAlgorithms(addr); err == nil {
-		sshClientConfig.HostKeyAlgorithms = algos
-		slog.Debug("using host key algorithms from known_hosts", "host", addr, "algorithms", algos)
-	}
-
-	sshConn, chans, reqs, err := ssh.NewClientConn(tcpConn, addr, &sshClientConfig)
-	if err != nil {
-		_ = tcpConn.Close()
-		switch {
-		case os.IsTimeout(err):
-			srv.metrics.BackendErrorsTimeoutTotal.Add(1)
-		case strings.Contains(err.Error(), "unable to authenticate"):
-			srv.metrics.BackendErrorsFailedAuthTotal.Add(1)
-		case !errors.As(err, new(*knownhosts.KeyError)):
-			srv.metrics.BackendErrorsOtherTotal.Add(1)
-		}
-		return nil, err
-	}
-
-	return ssh.NewClient(sshConn, chans, reqs), nil
-}
-
 func (srv *Server) matchUserPattern(pattern, user string) bool {
 	if user == "" || len(user) > 255 {
 		return false
 	}
 
-	return srv.matchShellPattern(pattern, user)
+	return srv.matchNamePattern(pattern, user)
 }
 
 func (srv *Server) matchHostPattern(pattern, host string) bool {
@@ -1370,7 +1547,7 @@ func (srv *Server) matchHostPattern(pattern, host string) bool {
 		return false
 	}
 
-	if srv.matchShellPattern(strings.ToLower(pattern), strings.ToLower(host)) {
+	if srv.matchNamePattern(strings.ToLower(pattern), strings.ToLower(host)) {
 		return true
 	}
 
@@ -1418,37 +1595,27 @@ func (srv *Server) matchPortPattern(pattern string, port any) bool {
 	return false
 }
 
-func (srv *Server) isClientEnvAllowed(authKeyOpts *AuthorizedKeyOptions, name string) bool {
-	allowed := false
-
-	for _, env := range authKeyOpts.Environments {
-		switch env.Sign {
-		case "+":
-			if srv.matchShellPattern(env.Name, name) {
-				allowed = true
-			}
-		case "-":
-			if srv.matchShellPattern(env.Name, name) {
-				allowed = false
-			}
-		default:
-			if env.Name == name {
-				return false
-			}
-		}
+func (srv *Server) matchNamePattern(pattern, value string) bool {
+	if strings.Contains(value, "/") || value == "." || value == ".." {
+		return false
 	}
 
-	return allowed
+	match, err := path.Match(pattern, value)
+	return match && err == nil
 }
 
-func (srv *Server) matchShellPattern(pattern, value string) bool {
-	if !strings.Contains(value, "/") && value != "." && value != ".." {
-		if match, err := filepath.Match(pattern, value); match && err == nil {
-			return true
-		}
+func (srv *Server) matchPathPattern(pattern, value string) bool {
+	if pattern == "*" {
+		return true
 	}
 
-	return false
+	pattern, value = path.Clean(pattern), path.Clean(value)
+	if path.IsAbs(pattern) != path.IsAbs(value) {
+		return false
+	}
+
+	match, err := path.Match(pattern, value)
+	return match && err == nil
 }
 
 func (srv *Server) marshalAuthorizedKey(key ssh.PublicKey) string {

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"maps"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ type Server struct {
 	publicKeyCallback func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error)
 	listener          net.Listener
 	connMap           sync.Map
+	unixListeners     sync.Map
 	ctx               context.Context
 	cancel            context.CancelFunc
 	done              chan struct{}
@@ -146,6 +148,17 @@ func (srv *Server) Stop() error {
 		return true
 	})
 
+	srv.unixListeners.Range(func(key, value any) bool {
+		if l, ok := value.(net.Listener); ok {
+			_ = l.Close()
+		}
+		if path, ok := key.(string); ok {
+			_ = os.Remove(path)
+			srv.unixListeners.Delete(path)
+		}
+		return true
+	})
+
 	done := make(chan struct{}, 1)
 	go func() {
 		srv.wg.Wait()
@@ -214,6 +227,12 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 					slog.Error("direct-tcpip error", "error", err)
 				}
 			}()
+		case "direct-streamlocal@openssh.com":
+			go func() {
+				if err := srv.handleDirectStreamLocal(newChannel); err != nil {
+					slog.Error("direct-streamlocal error", "error", err)
+				}
+			}()
 		default:
 			slog.Warn("unsupported channel type", "type", newChannel.ChannelType())
 			_ = newChannel.Reject(ssh.UnknownChannelType, "unsupported channel type")
@@ -221,6 +240,25 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 	}
 
 	return nil
+}
+
+func (srv *Server) handleGlobalRequests(requests <-chan *ssh.Request, sshConn *ssh.ServerConn) {
+	for req := range requests {
+		switch req.Type {
+		case "tcpip-forward":
+			srv.handleTCPIPForward(req, sshConn)
+		case "cancel-tcpip-forward":
+			srv.handleCancelTCPIPForward(req)
+		case "streamlocal-forward@openssh.com":
+			srv.handleStreamLocalForward(req, sshConn)
+		case "cancel-streamlocal-forward@openssh.com":
+			srv.handleCancelStreamLocalForward(req)
+		default:
+			if req.WantReply {
+				_ = req.Reply(false, nil)
+			}
+		}
+	}
 }
 
 func (srv *Server) handleSession(newChannel ssh.NewChannel) error {
@@ -367,86 +405,59 @@ func (srv *Server) handleDirectTCPIP(newChannel ssh.NewChannel) error {
 
 	go ssh.DiscardRequests(requests)
 
-	// Copy everything received back to the sender
-	buffer := make([]byte, 4096)
-	for {
-		n, readErr := channel.Read(buffer)
-		if readErr != nil {
-			if readErr == io.EOF {
-				return nil
-			}
-			return readErr
-		}
-		if n > 0 {
-			_, writeErr := channel.Write(buffer[:n])
-			if writeErr != nil {
-				return writeErr
-			}
-		}
-	}
+	return srv.echoChannel(channel)
 }
 
-func (srv *Server) handleGlobalRequests(requests <-chan *ssh.Request, sshConn *ssh.ServerConn) {
-	for req := range requests {
-		switch req.Type {
-		case "tcpip-forward":
-			var payload struct {
-				BindAddr string
-				BindPort uint32
-			}
-			if err := ssh.Unmarshal(req.Payload, &payload); err != nil {
-				if req.WantReply {
-					_ = req.Reply(false, nil)
-				}
-				continue
-			}
-
-			listener, err := net.Listen("tcp", net.JoinHostPort(payload.BindAddr, fmt.Sprintf("%d", payload.BindPort)))
-			if err != nil {
-				if req.WantReply {
-					_ = req.Reply(false, nil)
-				}
-				continue
-			}
-
-			boundPort := uint32(listener.Addr().(*net.TCPAddr).Port) // #nosec G115
-			if req.WantReply {
-				_ = req.Reply(true, ssh.Marshal(struct{ Port uint32 }{boundPort}))
-			}
-
-			go func() {
-				defer func() { _ = listener.Close() }()
-				for {
-					select {
-					case <-srv.ctx.Done():
-						return
-					default:
-					}
-
-					conn, err := listener.Accept()
-					if err != nil {
-						select {
-						case <-srv.ctx.Done():
-							return
-						default:
-							continue
-						}
-					}
-
-					go srv.handleForwardedTCPIP(sshConn, conn, payload.BindAddr, boundPort)
-				}
-			}()
-
-		case "cancel-tcpip-forward":
-			if req.WantReply {
-				_ = req.Reply(true, nil)
-			}
-
-		default:
-			if req.WantReply {
-				_ = req.Reply(false, nil)
-			}
+func (srv *Server) handleTCPIPForward(req *ssh.Request, sshConn *ssh.ServerConn) {
+	var payload struct {
+		BindAddr string
+		BindPort uint32
+	}
+	if err := ssh.Unmarshal(req.Payload, &payload); err != nil {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
 		}
+		return
+	}
+
+	listener, err := net.Listen("tcp", net.JoinHostPort(payload.BindAddr, fmt.Sprintf("%d", payload.BindPort)))
+	if err != nil {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return
+	}
+
+	boundPort := uint32(listener.Addr().(*net.TCPAddr).Port) // #nosec G115
+	if req.WantReply {
+		_ = req.Reply(true, ssh.Marshal(struct{ Port uint32 }{boundPort}))
+	}
+
+	go func() {
+		defer func() { _ = listener.Close() }()
+		for {
+			select {
+			case <-srv.ctx.Done():
+				return
+			default:
+			}
+			conn, err := listener.Accept()
+			if err != nil {
+				select {
+				case <-srv.ctx.Done():
+					return
+				default:
+					continue
+				}
+			}
+			go srv.handleForwardedTCPIP(sshConn, conn, payload.BindAddr, boundPort)
+		}
+	}()
+}
+
+func (srv *Server) handleCancelTCPIPForward(req *ssh.Request) {
+	if req.WantReply {
+		_ = req.Reply(true, nil)
 	}
 }
 
@@ -454,14 +465,14 @@ func (srv *Server) handleForwardedTCPIP(sshConn *ssh.ServerConn, conn net.Conn, 
 	defer func() { _ = conn.Close() }()
 
 	channelData := ssh.Marshal(struct {
-		ConnectedAddr  string
+		ConnectedHost  string
 		ConnectedPort  uint32
-		OriginatorAddr string
+		OriginatorIP   string
 		OriginatorPort uint32
 	}{
-		ConnectedAddr:  bindAddr,
+		ConnectedHost:  bindAddr,
 		ConnectedPort:  bindPort,
-		OriginatorAddr: conn.RemoteAddr().(*net.TCPAddr).IP.String(),
+		OriginatorIP:   conn.RemoteAddr().(*net.TCPAddr).IP.String(),
 		OriginatorPort: uint32(conn.RemoteAddr().(*net.TCPAddr).Port), // #nosec G115
 	})
 
@@ -473,20 +484,134 @@ func (srv *Server) handleForwardedTCPIP(sshConn *ssh.ServerConn, conn net.Conn, 
 
 	go ssh.DiscardRequests(requests)
 
-	// Copy everything received back to the sender
+	_ = srv.echoChannel(channel)
+}
+
+func (srv *Server) handleDirectStreamLocal(newChannel ssh.NewChannel) error {
+	var payload struct {
+		SocketPath string
+		Reserved0  string
+		Reserved1  uint32
+	}
+	if err := ssh.Unmarshal(newChannel.ExtraData(), &payload); err != nil {
+		_ = newChannel.Reject(ssh.ConnectionFailed, "failed to parse payload")
+		return err
+	}
+
+	channel, requests, err := newChannel.Accept()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = channel.Close() }()
+
+	go ssh.DiscardRequests(requests)
+
+	return srv.echoChannel(channel)
+}
+
+func (srv *Server) handleStreamLocalForward(req *ssh.Request, sshConn *ssh.ServerConn) {
+	var payload struct {
+		SocketPath string
+	}
+	if err := ssh.Unmarshal(req.Payload, &payload); err != nil {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return
+	}
+
+	socketPath := payload.SocketPath
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return
+	}
+
+	srv.unixListeners.Store(socketPath, listener)
+	if req.WantReply {
+		_ = req.Reply(true, nil)
+	}
+
+	go func() {
+		defer func() {
+			_ = listener.Close()
+			_ = os.Remove(socketPath)
+			srv.unixListeners.Delete(socketPath)
+		}()
+		for {
+			select {
+			case <-srv.ctx.Done():
+				return
+			default:
+			}
+			conn, err := listener.Accept()
+			if err != nil {
+				select {
+				case <-srv.ctx.Done():
+					return
+				default:
+					continue
+				}
+			}
+			go srv.handleForwardedStreamLocal(sshConn, conn, socketPath)
+		}
+	}()
+}
+
+func (srv *Server) handleCancelStreamLocalForward(req *ssh.Request) {
+	var payload struct {
+		SocketPath string
+	}
+	if err := ssh.Unmarshal(req.Payload, &payload); err == nil {
+		if val, ok := srv.unixListeners.LoadAndDelete(payload.SocketPath); ok {
+			if l, ok := val.(net.Listener); ok {
+				_ = l.Close()
+			}
+			_ = os.Remove(payload.SocketPath)
+		}
+	}
+	if req.WantReply {
+		_ = req.Reply(true, nil)
+	}
+}
+
+func (srv *Server) handleForwardedStreamLocal(sshConn *ssh.ServerConn, conn net.Conn, socketPath string) {
+	defer func() { _ = conn.Close() }()
+
+	channelData := ssh.Marshal(struct {
+		SocketPath string
+		Reserved0  string
+	}{
+		SocketPath: socketPath,
+		Reserved0:  "",
+	})
+
+	channel, requests, err := sshConn.OpenChannel("forwarded-streamlocal@openssh.com", channelData)
+	if err != nil {
+		return
+	}
+	defer func() { _ = channel.Close() }()
+
+	go ssh.DiscardRequests(requests)
+
+	_ = srv.echoChannel(channel)
+}
+
+func (srv *Server) echoChannel(channel ssh.Channel) error {
 	buffer := make([]byte, 4096)
 	for {
 		n, readErr := channel.Read(buffer)
 		if readErr != nil {
 			if readErr == io.EOF {
-				return
+				return nil
 			}
-			return
+			return readErr
 		}
 		if n > 0 {
-			_, writeErr := channel.Write(buffer[:n])
-			if writeErr != nil {
-				return
+			if _, writeErr := channel.Write(buffer[:n]); writeErr != nil {
+				return writeErr
 			}
 		}
 	}
