@@ -22,6 +22,10 @@ type Metrics struct {
 	PortForwardsLocalTotal              atomic.Uint64
 	PortForwardsRemoteActive            atomic.Int64
 	PortForwardsRemoteTotal             atomic.Uint64
+	SocketForwardsLocalActive           atomic.Int64
+	SocketForwardsLocalTotal            atomic.Uint64
+	SocketForwardsRemoteActive          atomic.Int64
+	SocketForwardsRemoteTotal           atomic.Uint64
 	ReceivedBytesTotal                  atomic.Uint64
 	SentBytesTotal                      atomic.Uint64
 	AuthSuccessesTotal                  atomic.Uint64
@@ -205,6 +209,22 @@ func (m *Metrics) writeCardeaMetrics(ew *errWriter) {
 	ew.printf("# TYPE cardea_port_forwards_remote_total counter\n")
 	ew.printf("# HELP cardea_port_forwards_remote_total Total number of remote port forwards.\n")
 	ew.printf("cardea_port_forwards_remote_total %d\n", m.PortForwardsRemoteTotal.Load())
+
+	ew.printf("# TYPE cardea_socket_forwards_local_active gauge\n")
+	ew.printf("# HELP cardea_socket_forwards_local_active Current number of active local socket forwards.\n")
+	ew.printf("cardea_socket_forwards_local_active %d\n", m.SocketForwardsLocalActive.Load())
+
+	ew.printf("# TYPE cardea_socket_forwards_local_total counter\n")
+	ew.printf("# HELP cardea_socket_forwards_local_total Total number of local socket forwards.\n")
+	ew.printf("cardea_socket_forwards_local_total %d\n", m.SocketForwardsLocalTotal.Load())
+
+	ew.printf("# TYPE cardea_socket_forwards_remote_active gauge\n")
+	ew.printf("# HELP cardea_socket_forwards_remote_active Current number of active remote socket forwards.\n")
+	ew.printf("cardea_socket_forwards_remote_active %d\n", m.SocketForwardsRemoteActive.Load())
+
+	ew.printf("# TYPE cardea_socket_forwards_remote_total counter\n")
+	ew.printf("# HELP cardea_socket_forwards_remote_total Total number of remote socket forwards.\n")
+	ew.printf("cardea_socket_forwards_remote_total %d\n", m.SocketForwardsRemoteTotal.Load())
 
 	ew.printf("# TYPE cardea_received_bytes_total counter\n")
 	ew.printf("# HELP cardea_received_bytes_total Total bytes received from clients.\n")

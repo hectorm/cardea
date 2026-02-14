@@ -178,6 +178,18 @@ permitconnect="user1@host1:port1,user2@host2:port2",permitopen="host1:port1,host
   - Supports glob patterns and ranges (e.g., `8000-8999`) for ports.
   - By default, remote port forwarding is disabled.
   - **Example:** `permitlisten="localhost:8080,0.0.0.0:8000-8999"`.
+- **`permitsocketopen`**: allowed local Unix socket forwarding destination (can be specified multiple times).
+  - **Format:** absolute or relative socket path.
+  - Supports glob patterns. Use a bare `*` to allow any path.
+  - Absolute requests only match absolute patterns, and relative requests only match relative patterns.
+  - By default, local socket forwarding is disabled.
+  - **Example:** `permitsocketopen="/var/run/docker.sock",permitsocketopen="/tmp/*.sock"`.
+- **`permitsocketlisten`**: allowed remote Unix socket forwarding bind path (can be specified multiple times).
+  - **Format:** absolute or relative socket path.
+  - Supports glob patterns. Use a bare `*` to allow any path.
+  - Absolute requests only match absolute patterns, and relative requests only match relative patterns.
+  - By default, remote socket forwarding is disabled.
+  - **Example:** `permitsocketlisten="/tmp/agent.sock"`.
 - **`environment`**: controls environment variables on the backend session (can be specified multiple times). Three forms are supported:
   - **`NAME=value`**: sets a server-side variable. The client cannot override it. If specified multiple times for the same name, the last one wins.
   - **`+PATTERN`**: allows the client to forward variables matching the glob pattern.
@@ -213,9 +225,11 @@ permitconnect="user1@host1:port1,user2@host2:port2",permitopen="host1:port1,host
 - **`pty`**: enable pseudo-terminal allocation (overrides `restrict` or `no-pty`).
 - **`no-port-forwarding`**: disable both local and remote port forwarding.
 - **`port-forwarding`**: enable port forwarding (overrides `restrict` or `no-port-forwarding`).
-- **`restrict`**: enable all restrictions (equivalent to `no-pty,no-port-forwarding`).
-  - Use with `pty` or `port-forwarding` to selectively re-enable features.
-  - **Example:** `restrict,pty,permitconnect="*@*:22"` (allows PTY but no port forwarding).
+- **`no-socket-forwarding`**: disable both local and remote Unix socket forwarding.
+- **`socket-forwarding`**: enable socket forwarding (overrides `restrict` or `no-socket-forwarding`).
+- **`restrict`**: enable all restrictions (equivalent to `no-pty,no-port-forwarding,no-socket-forwarding`).
+  - Use with `pty`, `port-forwarding`, or `socket-forwarding` to selectively re-enable features.
+  - **Example:** `restrict,pty,permitconnect="*@*:22"` (allows PTY but no port or socket forwarding).
 - **`no-recording`**: disable session recording for this key.
 - **`recording`**: enable session recording (overrides `no-recording`).
 
