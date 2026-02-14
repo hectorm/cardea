@@ -362,16 +362,13 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 		return err
 	}
 
-	if srv.rateLimit != nil && !srv.rateLimit.Allow(ip) {
+	if srv.rateLimit != nil && !srv.rateLimit.Take(ip) {
 		srv.metrics.RateLimitRejectionsTotal.Add(1)
 		return fmt.Errorf("rate limit exceeded for %s", ip)
 	}
 
 	frontendConn, channels, requests, err := srv.newFrontendConnection(tcpConn)
 	if err != nil {
-		if srv.rateLimit != nil {
-			srv.rateLimit.Failure(ip)
-		}
 		if _, ok := err.(*ssh.ServerAuthError); ok {
 			return nil
 		}

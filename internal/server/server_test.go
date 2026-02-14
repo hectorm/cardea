@@ -1670,22 +1670,12 @@ func TestBastionSSHServer(t *testing.T) {
 			}
 		}
 
-		if err := waitFor(2*time.Second, func() error {
-			if bastionSrv.rateLimit.Allow("127.0.0.1") && bastionSrv.rateLimit.Allow("::1") {
-				return fmt.Errorf("rate limiter should block localhost")
-			}
-			return nil
-		}); err != nil {
-			t.Error(err)
-			return
-		}
-
 		if _, err := connectToServer(t, cliGood, bastionSrv); err == nil {
 			t.Error("expected authentication to fail due to rate limit, but it succeeded")
 			return
 		}
 
-		if bastionSrv.rateLimit.Allow("127.0.0.1") && bastionSrv.rateLimit.Allow("::1") {
+		if _, err := connectToServer(t, cliGood, bastionSrv); err == nil {
 			t.Error("rate limiter should still block localhost after rejected connection")
 			return
 		}
@@ -4443,16 +4433,6 @@ func TestBastionSSHServer(t *testing.T) {
 						t.Error("expected authentication to fail, but it succeeded")
 						return
 					}
-				}
-
-				if err := waitFor(2*time.Second, func() error {
-					if bastionSrv.rateLimit.Allow("127.0.0.1") && bastionSrv.rateLimit.Allow("::1") {
-						return fmt.Errorf("rate limiter should block localhost")
-					}
-					return nil
-				}); err != nil {
-					t.Error(err)
-					return
 				}
 
 				for range 5 {
