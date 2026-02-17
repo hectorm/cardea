@@ -5,7 +5,7 @@
 ## "build" stage
 ##################################################
 
-FROM --platform=${BUILDPLATFORM:-linux/amd64} docker.io/golang:1.25.6-trixie@sha256:ff83f3762390c2cccb53618ccc18af23e556aff9b1db4428637e9f63287c8171 AS build
+FROM --platform=${BUILDPLATFORM:-linux/amd64} docker.io/golang:1.26.0-trixie@sha256:889885d7cc1275935e3f9920aabadc5fadbe873f633d92a746f1bc401dd40f69 AS build
 
 ARG TARGETOS
 ARG TARGETARCH
