@@ -24,7 +24,7 @@ jobs:
         id: "go-version"
         uses: "./.github/actions/go-version"
       - name: "Set up Go"
-        uses: "actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5"
+        uses: "actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417"
         with:
           go-version: "${{ steps.go-version.outputs.version }}"
           check-latest: true
@@ -45,7 +45,7 @@ jobs:
         id: "go-version"
         uses: "./.github/actions/go-version"
       - name: "Set up Go"
-        uses: "actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5"
+        uses: "actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417"
         with:
           go-version: "${{ steps.go-version.outputs.version }}"
           check-latest: true
@@ -58,7 +58,7 @@ jobs:
           jq -e '[.runs[].results] | add | length == 0' ./gosec.sarif >/dev/null
       - name: "Upload SARIF"
         if: always()
-        uses: "github/codeql-action/upload-sarif@45cbd0c69e560cd9e7cd7f8c32362050c9b7ded2"
+        uses: "github/codeql-action/upload-sarif@89a39a4e59826350b863aa6b6252a07ad50cf83e"
         with:
           sarif_file: "./gosec.sarif"
           category: "gosec"
@@ -76,7 +76,7 @@ jobs:
         id: "go-version"
         uses: "./.github/actions/go-version"
       - name: "Set up Go"
-        uses: "actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5"
+        uses: "actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417"
         with:
           go-version: "${{ steps.go-version.outputs.version }}"
           check-latest: true
@@ -89,7 +89,7 @@ jobs:
           jq -e '[.runs[].results] | add | length == 0' ./govulncheck.sarif >/dev/null
       - name: "Upload SARIF"
         if: always()
-        uses: "github/codeql-action/upload-sarif@45cbd0c69e560cd9e7cd7f8c32362050c9b7ded2"
+        uses: "github/codeql-action/upload-sarif@89a39a4e59826350b863aa6b6252a07ad50cf83e"
         with:
           sarif_file: "./govulncheck.sarif"
           category: "govulncheck"
@@ -106,7 +106,7 @@ jobs:
         id: "go-version"
         uses: "./.github/actions/go-version"
       - name: "Set up Go"
-        uses: "actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5"
+        uses: "actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417"
         with:
           go-version: "${{ steps.go-version.outputs.version }}"
           check-latest: true
@@ -134,7 +134,7 @@ jobs:
         id: "go-version"
         uses: "./.github/actions/go-version"
       - name: "Set up Go"
-        uses: "actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5"
+        uses: "actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417"
         with:
           go-version: "${{ steps.go-version.outputs.version }}"
           check-latest: true
@@ -196,7 +196,7 @@ jobs:
         id: "go-version"
         uses: "./.github/actions/go-version"
       - name: "Set up Go"
-        uses: "actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5"
+        uses: "actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417"
         with:
           go-version: "${{ steps.go-version.outputs.version }}"
           check-latest: true
@@ -208,11 +208,11 @@ jobs:
             GOARM="${{ matrix.go.GOARM }}"
           file ./dist/* && gzip -nv ./dist/*
       - name: "Generate artifact attestation"
-        uses: "actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f"
+        uses: "actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32"
         with:
           subject-path: "./dist/*.gz"
       - name: "Upload artifact"
-        uses: "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f"
+        uses: "actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f"
         with:
           name: "dist-${{ matrix.go.GOOS }}-${{ matrix.go.GOARCH }}-${{ matrix.go.GOARM }}"
           path: "./dist/*.gz"
@@ -289,14 +289,14 @@ jobs:
             --sbom=true
       - name: "Generate artifact attestation (GHCR)"
         if: "github.event_name != 'pull_request'"
-        uses: "actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f"
+        uses: "actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32"
         with:
           subject-name: "ghcr.io/${{ github.repository }}"
           subject-digest: "${{ steps.build-push.outputs.digest }}"
           push-to-registry: "${{ github.event_name != 'pull_request' }}"
       - name: "Generate artifact attestation (Docker Hub)"
         if: "github.event_name != 'pull_request'"
-        uses: "actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f"
+        uses: "actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32"
         with:
           subject-name: "index.docker.io/${{ github.repository }}"
           subject-digest: "${{ steps.build-push.outputs.digest }}"
@@ -311,7 +311,7 @@ jobs:
       contents: "write"
     steps:
       - name: "Download artifacts"
-        uses: "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131"
+        uses: "actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3"
         with:
           pattern: "dist-*"
           merge-multiple: true
