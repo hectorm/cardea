@@ -285,16 +285,16 @@ func parseValue(s string, def constraintDef) (int, error) {
 		}
 	}
 
-	v, err := strconv.ParseInt(s, 10, 64)
+	v, err := strconv.Atoi(s)
 	if err != nil {
 		return 0, fmt.Errorf("invalid value %q: %w", s, err)
 	}
 
-	if v < int64(def.min) || v > int64(def.max) {
+	if v < def.min || v > def.max {
 		return 0, fmt.Errorf("value %d out of range [%d, %d]", v, def.min, def.max)
 	}
 
-	return int(v), nil
+	return v, nil
 }
 
 func matchRanges(ranges []Range, val int) bool {
