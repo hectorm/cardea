@@ -75,14 +75,10 @@ var bufferPool = sync.Pool{
 type Option func(*Server) error
 
 func NewServer(cfg *config.Config, opts ...Option) (*Server, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-
 	cfgCopy := *cfg
 	srv := &Server{
 		config:  &cfgCopy,
 		metrics: metrics.NewMetrics(),
-		ctx:     ctx,
-		cancel:  cancel,
 		done:    make(chan struct{}),
 	}
 
@@ -186,6 +182,9 @@ func NewServer(cfg *config.Config, opts ...Option) (*Server, error) {
 		HostKeyCallback: srv.hostKeyCallback,
 		Timeout:         sshConnTimeout,
 	}
+
+	// #nosec G118 - Cancel is called in Server.Stop()
+	srv.ctx, srv.cancel = context.WithCancel(context.Background())
 
 	return srv, nil
 }

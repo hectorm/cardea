@@ -32,16 +32,12 @@ type Server struct {
 type Option func(*Server) error
 
 func NewServer(opts ...Option) (*Server, error) {
-	ctx, cancel := context.WithCancel(context.Background())
 	srv := &Server{
-		ctx:    ctx,
-		cancel: cancel,
-		done:   make(chan struct{}),
+		done: make(chan struct{}),
 	}
 
 	for _, opt := range opts {
 		if err := opt(srv); err != nil {
-			cancel()
 			return nil, err
 		}
 	}
@@ -67,6 +63,9 @@ func NewServer(opts ...Option) (*Server, error) {
 		MaxAuthTries:      6,
 	}
 	srv.sshServerConfig.AddHostKey(srv.signer)
+
+	// #nosec G118 - Cancel is called in Server.Stop()
+	srv.ctx, srv.cancel = context.WithCancel(context.Background())
 
 	return srv, nil
 }
