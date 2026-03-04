@@ -1,7 +1,8 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="./resources/logo/Cardea-Horizontal-Light.svg">
-    <img src="./resources/logo/Cardea-Horizontal-Dark.svg" height="192">
+    <source media="(prefers-color-scheme: light)" srcset="./resources/logo/Cardea-Horizontal-Dark.svg">
+    <img src="./resources/logo/Cardea-Horizontal.svg" height="192">
   </picture>
 </p>
 
