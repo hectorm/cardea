@@ -283,7 +283,7 @@ The format supports comments, directives, line continuation, and pipe expansion:
 
 # === Option templates ===
 #define WORKING_HOURS dow:mon-fri hour:8-17 tz:Europe/Madrid
-#define SFTP_OPTS command="internal-sftp",no-pty
+#define SFTP_OPTS command="internal-sftp",restrict
 
 # === Access rules ===
 
