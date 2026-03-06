@@ -53,7 +53,7 @@ services:
       - "--storage.tsdb.path=/prometheus/"
 
   grafana:
-    image: "docker.io/grafana/grafana:13.0.0-22649226721"
+    image: "docker.io/grafana/grafana:13.0.0-22696220628"
     profiles: ["metrics"]
     restart: "always"
     hostname: "grafana"
