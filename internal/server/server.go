@@ -1601,6 +1601,10 @@ func (srv *Server) matchNamePattern(pattern, value string) bool {
 }
 
 func (srv *Server) matchPathPattern(pattern, value string) bool {
+	if value == "" {
+		return false
+	}
+
 	if pattern == "*" {
 		return true
 	}
