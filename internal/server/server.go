@@ -42,6 +42,12 @@ const (
 	sshConnTimeout  = 10 * time.Second
 )
 
+var bufferPool = sync.Pool{
+	New: func() any {
+		return make([]byte, 32*1024)
+	},
+}
+
 type Server struct {
 	config               *config.Config
 	sshServerConfig      *ssh.ServerConfig
@@ -65,12 +71,6 @@ type Server struct {
 	cancel               context.CancelFunc
 	done                 chan struct{}
 	wg                   sync.WaitGroup
-}
-
-var bufferPool = sync.Pool{
-	New: func() any {
-		return make([]byte, 32*1024)
-	},
 }
 
 type Option func(*Server) error
