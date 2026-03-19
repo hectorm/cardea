@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -15,6 +16,13 @@ import (
 
 	"github.com/hectorm/cardea/internal/utils/disk"
 )
+
+var writerPool = sync.Pool{
+	New: func() any {
+		w, _ := gzip.NewWriterLevel(io.Discard, flate.BestSpeed)
+		return w
+	},
+}
 
 type AsciicastV3Recorder struct {
 	path    string
@@ -77,7 +85,8 @@ func (r *AsciicastV3Recorder) WriteHeader(header *AsciicastV3Header) error {
 	}
 
 	r.file = file
-	r.writer, _ = gzip.NewWriterLevel(file, flate.BestSpeed)
+	r.writer = writerPool.Get().(*gzip.Writer)
+	r.writer.Reset(file)
 	r.prev = time.Now()
 
 	headerBytes, err := json.Marshal(header)
@@ -194,6 +203,7 @@ func (r *AsciicastV3Recorder) Close() error {
 	var wErr error
 	if r.writer != nil {
 		wErr = r.writer.Close()
+		writerPool.Put(r.writer)
 		r.writer = nil
 	}
 
