@@ -15,7 +15,7 @@ func GetDiskUsage(path string) (float64, error) {
 		return 0, nil
 	}
 
-	freeBytes := uint64(stat.Bavail) * uint64(stat.Bsize)
+	freeBytes := uint64(max(stat.Bavail, 0)) * uint64(stat.Bsize)
 	usedBytes := totalBytes - freeBytes
 	usagePercent := float64(usedBytes) / float64(totalBytes) * 100
 
