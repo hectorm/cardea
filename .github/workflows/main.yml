@@ -58,7 +58,7 @@ jobs:
           jq -e '[.runs[].results] | add | length == 0' ./gosec.sarif >/dev/null
       - name: "Upload SARIF"
         if: always()
-        uses: "github/codeql-action/upload-sarif@0d579ffd059c29b07949a3cce3983f0780820c98"
+        uses: "github/codeql-action/upload-sarif@38697555549f1db7851b81482ff19f1fa5c4fedc"
         with:
           sarif_file: "./gosec.sarif"
           category: "gosec"
@@ -89,7 +89,7 @@ jobs:
           jq -e '[.runs[].results] | add | length == 0' ./govulncheck.sarif >/dev/null
       - name: "Upload SARIF"
         if: always()
-        uses: "github/codeql-action/upload-sarif@0d579ffd059c29b07949a3cce3983f0780820c98"
+        uses: "github/codeql-action/upload-sarif@38697555549f1db7851b81482ff19f1fa5c4fedc"
         with:
           sarif_file: "./govulncheck.sarif"
           category: "govulncheck"
@@ -311,7 +311,7 @@ jobs:
       contents: "write"
     steps:
       - name: "Download artifacts"
-        uses: "actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3"
+        uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
         with:
           pattern: "dist-*"
           merge-multiple: true
