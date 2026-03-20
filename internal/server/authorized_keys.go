@@ -41,6 +41,7 @@ type AuthorizedKeyOptions struct {
 	NoSocketForwarding  bool                   `json:"no_socket_forwarding"`
 	NoPty               bool                   `json:"no_pty"`
 	NoRecording         bool                   `json:"no_recording"`
+	Comment             string                 `json:"comment"`
 }
 
 type PermitConnect struct {
@@ -103,7 +104,7 @@ lineLoop:
 		var keyOpts *AuthorizedKeyOptions
 
 		for _, seg := range line.segments {
-			publicKey, _, segOpts, _, err := ssh.ParseAuthorizedKey([]byte(seg))
+			publicKey, comment, segOpts, _, err := ssh.ParseAuthorizedKey([]byte(seg))
 			if err != nil {
 				slog.Warn("authorized_keys file parse", "line", line.line, "reason", err, "context", line.raw)
 				continue lineLoop
@@ -118,6 +119,7 @@ lineLoop:
 					slog.Warn("authorized_keys file parse", "line", line.line, "reason", err, "context", line.raw)
 					continue lineLoop
 				}
+				keyOpts.Comment = comment
 			} else if len(segOpts) > 0 {
 				slog.Warn("authorized_keys file parse", "line", line.line, "reason", "unexpected options", "context", line.raw)
 				continue lineLoop

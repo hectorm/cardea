@@ -514,10 +514,11 @@ func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.
 	if srv.config.RecordingsDir != "" && !authKeyOpts.NoRecording {
 		if ok, err := srv.diskCleanup(); ok {
 			title := fmt.Sprintf(
-				"Connection to %q from %q (%s)",
+				"Connection to %q from %q (%s %s)",
 				backendConn.RemoteAddr(),
 				frontendConn.RemoteAddr(),
 				frontendConn.Permissions.Extensions[sshPublicKeyExt],
+				authKeyOpts.Comment,
 			)
 			path := filepath.Join(srv.config.RecordingsDir, fmt.Sprintf("%s-%s.cast.gz",
 				time.Now().Format("20060102-150405"),
@@ -1300,9 +1301,12 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 
 	var authKeyOpts *AuthorizedKeyOptions
 	var denyReason string
+	var denyComment string
 
 	now := time.Now()
 	for _, entry := range authKeyEntries {
+		denyComment = entry.Comment
+
 		if entry.StartTime != nil && now.Before(*entry.StartTime) {
 			denyReason = "denied_start_time"
 			continue
@@ -1378,6 +1382,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 			"remote_addr", remoteAddr,
 			"session_id", sessionID,
 			"public_key", publicKey,
+			"comment", denyComment,
 		)
 		return nil, fmt.Errorf("public key not authorized")
 	}
@@ -1394,6 +1399,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 		"remote_addr", remoteAddr,
 		"session_id", sessionID,
 		"public_key", publicKey,
+		"comment", authKeyOpts.Comment,
 	)
 	return &ssh.Permissions{
 		Extensions: map[string]string{

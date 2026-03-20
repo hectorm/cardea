@@ -2450,6 +2450,9 @@ func TestBastionSSHServer(t *testing.T) {
 
 				# [T53] Restrict with pty and port-forwarding overrides
 				restrict,pty,port-forwarding,permitconnect="*@restrict-override.example.com:22" BOB_KEY
+
+				# [T54] Key comment
+				permitconnect="*@comment.example.com:22" ALICE_KEY alice@laptop
 				`, aliceKeyAuth, bobKeyAuth, carolKeyAuth),
 				expected: map[string][]*AuthorizedKeyOptions{
 					aliceKeyStr: {
@@ -2685,6 +2688,12 @@ func TestBastionSSHServer(t *testing.T) {
 							NoPortForwarding:   true,
 							NoSocketForwarding: true,
 							NoPty:              true,
+						},
+						// [T54]
+						{
+							PermitConnects: []PermitConnect{{User: "*", Host: "comment.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
+							Comment:        "alice@laptop",
 						},
 					},
 					bobKeyStr: {
@@ -3016,6 +3025,10 @@ func TestBastionSSHServer(t *testing.T) {
 						}
 						if opts.NoRecording != expectedOpts.NoRecording {
 							t.Errorf("expected no-recording %t for key, got %t", expectedOpts.NoRecording, opts.NoRecording)
+							return
+						}
+						if expectedOpts.Comment != "" && opts.Comment != expectedOpts.Comment {
+							t.Errorf("expected comment %q for key, got %q", expectedOpts.Comment, opts.Comment)
 							return
 						}
 					}
