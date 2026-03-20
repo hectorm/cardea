@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	maxInputSize            = 1024 * 1024 // 1MB
-	maxLineLength           = 64 * 1024   // 64KB
+	maxInputSize            = 10 * 1024 * 1024 // 10MB
+	maxLineLength           = 64 * 1024        // 64KB
 	maxPermitConnectLength  = 1024
 	maxPermitTCPLength      = 512
 	maxPermitSocketLength   = 512
