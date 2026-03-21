@@ -1099,7 +1099,7 @@ func TestBastionSSHServer(t *testing.T) {
 			})
 
 			if err := waitFor(2*time.Second, func() error {
-				files, err := filepath.Glob(filepath.Join(recordingsDir, "*.cast.gz"))
+				files, err := filepath.Glob(filepath.Join(recordingsDir, "[0-9][0-9][0-9][0-9]", "[0-9][0-9]", "[0-9][0-9]", "*.cast.gz"))
 				if err != nil {
 					return fmt.Errorf("failed to glob for recordings: %w", err)
 				}
@@ -1161,7 +1161,7 @@ func TestBastionSSHServer(t *testing.T) {
 			})
 
 			if err := waitFor(2*time.Second, func() error {
-				files, err := filepath.Glob(filepath.Join(recordingsDir, "*.cast.gz"))
+				files, err := filepath.Glob(filepath.Join(recordingsDir, "[0-9][0-9][0-9][0-9]", "[0-9][0-9]", "[0-9][0-9]", "*.cast.gz"))
 				if err != nil {
 					return fmt.Errorf("failed to glob for recordings: %w", err)
 				}
@@ -1323,7 +1323,7 @@ func TestBastionSSHServer(t *testing.T) {
 			})
 
 			if err := waitFor(2*time.Second, func() error {
-				files, err := filepath.Glob(filepath.Join(recordingsDir, "*.cast.gz"))
+				files, err := filepath.Glob(filepath.Join(recordingsDir, "[0-9][0-9][0-9][0-9]", "[0-9][0-9]", "[0-9][0-9]", "*.cast.gz"))
 				if err != nil {
 					return fmt.Errorf("failed to glob for recordings: %w", err)
 				}
@@ -1393,7 +1393,7 @@ func TestBastionSSHServer(t *testing.T) {
 					}
 
 					if err := waitFor(2*time.Second, func() error {
-						files, err := filepath.Glob(filepath.Join(recordingsDir, "*.cast.gz"))
+						files, err := filepath.Glob(filepath.Join(recordingsDir, "[0-9][0-9][0-9][0-9]", "[0-9][0-9]", "[0-9][0-9]", "*.cast.gz"))
 						if err != nil {
 							return fmt.Errorf("failed to glob for recordings: %w", err)
 						}

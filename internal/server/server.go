@@ -37,9 +37,9 @@ import (
 )
 
 const (
-	sshPublicKeyExt = "public-key"
-	sshKeyOptsExt   = "key-options"
-	sshConnTimeout  = 10 * time.Second
+	sshKeyFpExt    = "key-fingerprint"
+	sshKeyOptsExt  = "key-options"
+	sshConnTimeout = 10 * time.Second
 )
 
 var bufferPool = sync.Pool{
@@ -512,20 +512,27 @@ func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.
 	var asciicastRec *recorder.AsciicastV3Recorder
 	var asciicastHeader *recorder.AsciicastV3Header
 	if srv.config.RecordingsDir != "" && !authKeyOpts.NoRecording {
-		if ok, err := srv.diskCleanup(); ok {
-			title := fmt.Sprintf(
-				"Connection to %q from %q (%s %s)",
+		if ok, _, err := srv.diskCleanup(); ok {
+			sessionID := hex.EncodeToString(frontendConn.SessionID()[:10])
+			now := time.Now()
+			dir := filepath.Join(srv.config.RecordingsDir, now.Format("2006"), now.Format("01"), now.Format("02"))
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				return err
+			}
+			path := filepath.Join(dir, fmt.Sprintf("%s-%s.cast.gz", now.Format("150405"), sessionID))
+			asciicastRec = recorder.NewAsciicastV3Recorder(path)
+			asciicastHeader = recorder.NewAsciicastV3Header(fmt.Sprintf(
+				"Connection to %q from %q",
 				backendConn.RemoteAddr(),
 				frontendConn.RemoteAddr(),
-				frontendConn.Permissions.Extensions[sshPublicKeyExt],
-				authKeyOpts.Comment,
-			)
-			path := filepath.Join(srv.config.RecordingsDir, fmt.Sprintf("%s-%s.cast.gz",
-				time.Now().Format("20060102-150405"),
-				hex.EncodeToString(frontendConn.SessionID()[:10]),
 			))
-			asciicastRec = recorder.NewAsciicastV3Recorder(path)
-			asciicastHeader = recorder.NewAsciicastV3Header(title)
+			asciicastHeader.Cardea = &recorder.AsciicastV3Cardea{
+				BackendAddr:  backendConn.RemoteAddr().String(),
+				FrontendAddr: frontendConn.RemoteAddr().String(),
+				SessionID:    sessionID,
+				Fingerprint:  frontendConn.Permissions.Extensions[sshKeyFpExt],
+				Comment:      authKeyOpts.Comment,
+			}
 			defer func() { _ = asciicastRec.Close() }()
 		} else if err != nil {
 			return err
@@ -1273,7 +1280,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 	remoteAddr := conn.RemoteAddr()
 	remoteHost, _, _ := net.SplitHostPort(remoteAddr.String())
 	sessionID := hex.EncodeToString(conn.SessionID()[:10])
-	publicKey := srv.marshalAuthorizedKey(key)
+	fingerprint := ssh.FingerprintSHA256(key)
 
 	authKeyEntries, ok := srv.authKeysDB[string(key.Marshal())]
 	if !ok {
@@ -1282,7 +1289,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 			"backend", user,
 			"remote_addr", remoteAddr,
 			"session_id", sessionID,
-			"public_key", publicKey,
+			"fingerprint", fingerprint,
 		)
 		return nil, fmt.Errorf("public key not authorized")
 	}
@@ -1294,7 +1301,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 			"backend", user,
 			"remote_addr", remoteAddr,
 			"session_id", sessionID,
-			"public_key", publicKey,
+			"fingerprint", fingerprint,
 		)
 		return nil, fmt.Errorf("public key not authorized")
 	}
@@ -1381,7 +1388,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 			"backend", user,
 			"remote_addr", remoteAddr,
 			"session_id", sessionID,
-			"public_key", publicKey,
+			"fingerprint", fingerprint,
 			"comment", denyComment,
 		)
 		return nil, fmt.Errorf("public key not authorized")
@@ -1398,13 +1405,13 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 		"backend", user,
 		"remote_addr", remoteAddr,
 		"session_id", sessionID,
-		"public_key", publicKey,
+		"fingerprint", fingerprint,
 		"comment", authKeyOpts.Comment,
 	)
 	return &ssh.Permissions{
 		Extensions: map[string]string{
-			sshPublicKeyExt: publicKey,
-			sshKeyOptsExt:   string(authKeyOptsStr),
+			sshKeyFpExt:   fingerprint,
+			sshKeyOptsExt: string(authKeyOptsStr),
 		},
 	}, nil
 }
@@ -1742,8 +1749,25 @@ func (srv *Server) diskCleanupWorker() {
 	for {
 		select {
 		case <-ticker.C:
-			if _, err := srv.diskCleanup(); err != nil {
+			_, deleted, err := srv.diskCleanup()
+			if err != nil {
 				slog.Error("disk cleanup failed", "error", err)
+			}
+			if deleted {
+				base := filepath.Clean(srv.config.RecordingsDir)
+				var dirs []string
+				_ = filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+					if err != nil {
+						return err
+					}
+					if d.IsDir() && path != base {
+						dirs = append(dirs, path)
+					}
+					return nil
+				})
+				for i := len(dirs) - 1; i >= 0; i-- {
+					_ = os.Remove(dirs[i])
+				}
 			}
 		case <-srv.ctx.Done():
 			return
@@ -1751,111 +1775,112 @@ func (srv *Server) diskCleanupWorker() {
 	}
 }
 
-func (srv *Server) diskCleanup() (bool, error) {
+func (srv *Server) diskCleanup() (ok bool, deleted bool, err error) {
 	if srv.config.RecordingsDir == "" {
-		return true, nil
+		return true, false, nil
+	}
+
+	if srv.config.RecordingsRetentionTime <= 0 && srv.recordingsMaxPercent <= 0 && srv.recordingsMaxBytes <= 0 {
+		return true, false, nil
 	}
 
 	if err := os.MkdirAll(srv.config.RecordingsDir, 0700); err != nil {
-		return false, err
+		return false, false, err
 	}
 
-	if srv.config.RecordingsRetentionTime > 0 {
-		files, err := disk.GetFilesBySuffix(srv.config.RecordingsDir, ".cast.gz")
-		if err != nil {
-			return false, err
-		}
+	files, err := disk.GetFilesBySuffix(srv.config.RecordingsDir, ".cast.gz")
+	if err != nil {
+		return false, false, err
+	}
 
+	// Remove files older than the configured retention time
+	if srv.config.RecordingsRetentionTime > 0 {
 		cutoffTime := time.Now().Add(-srv.config.RecordingsRetentionTime)
+		remaining := files[:0]
 		for _, file := range files {
 			if file.ModTime.Before(cutoffTime) {
 				if err := os.Remove(file.Path); err != nil {
 					slog.Error("failed to remove recording", "file", file.Path, "error", err)
+					remaining = append(remaining, file)
 					continue
 				}
+				deleted = true
 				slog.Debug("removed recording", "file", filepath.Base(file.Path), "age", time.Since(file.ModTime))
+			} else {
+				remaining = append(remaining, file)
 			}
 		}
+		files = remaining
 	}
 
+	// Remove oldest files until disk usage is below the threshold
 	if srv.recordingsMaxPercent > 0 {
 		usage, err := disk.GetDiskUsage(srv.config.RecordingsDir)
 		if err != nil {
-			return false, err
+			return false, deleted, err
 		}
 
-		if usage <= srv.recordingsMaxPercent {
-			return true, nil
-		}
+		if usage > srv.recordingsMaxPercent {
+			slog.Warn("disk usage above threshold, cleaning up oldest recordings",
+				"usage", fmt.Sprintf("%.1f%%", usage),
+				"threshold", fmt.Sprintf("%.1f%%", srv.recordingsMaxPercent))
 
-		files, err := disk.GetFilesBySuffix(srv.config.RecordingsDir, ".cast.gz")
-		if err != nil {
-			return false, err
-		}
+			for _, file := range files {
+				if err := os.Remove(file.Path); err != nil {
+					slog.Error("failed to remove recording", "file", file.Path, "error", err)
+					continue
+				}
+				deleted = true
+				slog.Debug("removed recording", "file", filepath.Base(file.Path))
 
-		slog.Warn("disk usage above threshold, cleaning up oldest recordings",
-			"usage", fmt.Sprintf("%.1f%%", usage),
-			"threshold", fmt.Sprintf("%.1f%%", srv.recordingsMaxPercent))
+				usage, err = disk.GetDiskUsage(srv.config.RecordingsDir)
+				if err != nil {
+					return false, deleted, err
+				}
 
-		for _, file := range files {
-			if err := os.Remove(file.Path); err != nil {
-				slog.Error("failed to remove recording", "file", file.Path, "error", err)
-				continue
+				if usage <= srv.recordingsMaxPercent {
+					slog.Info("disk usage back below threshold",
+						"usage", fmt.Sprintf("%.1f%%", usage),
+						"threshold", fmt.Sprintf("%.1f%%", srv.recordingsMaxPercent))
+					return true, deleted, nil
+				}
 			}
-			slog.Debug("removed recording", "file", filepath.Base(file.Path))
 
-			usage, err = disk.GetDiskUsage(srv.config.RecordingsDir)
-			if err != nil {
-				return false, err
-			}
-
-			if usage <= srv.recordingsMaxPercent {
-				slog.Info("disk usage back below threshold",
-					"usage", fmt.Sprintf("%.1f%%", usage),
-					"threshold", fmt.Sprintf("%.1f%%", srv.recordingsMaxPercent))
-				return true, nil
-			}
+			return false, deleted, nil
 		}
-
-		return false, nil
 	}
 
+	// Remove oldest files until total size is below the threshold
 	if srv.recordingsMaxBytes > 0 {
-		total, err := disk.GetTotalSizeBySuffix(srv.config.RecordingsDir, ".cast.gz")
-		if err != nil {
-			return false, err
-		}
-
-		if total <= srv.recordingsMaxBytes {
-			return true, nil
-		}
-
-		files, err := disk.GetFilesBySuffix(srv.config.RecordingsDir, ".cast.gz")
-		if err != nil {
-			return false, err
-		}
-
-		slog.Warn("recordings size above threshold, cleaning up oldest recordings",
-			"size", bytesize.Format(total),
-			"threshold", bytesize.Format(srv.recordingsMaxBytes))
-
+		var total int64
 		for _, file := range files {
-			if err := os.Remove(file.Path); err != nil {
-				slog.Error("failed to remove recording", "file", file.Path, "error", err)
-				continue
-			}
-			slog.Debug("removed recording", "file", filepath.Base(file.Path))
-
-			if total -= file.Size; total <= srv.recordingsMaxBytes {
-				slog.Info("recordings size back below threshold",
-					"size", bytesize.Format(total),
-					"threshold", bytesize.Format(srv.recordingsMaxBytes))
-				return true, nil
-			}
+			total += file.Size
 		}
 
-		return false, nil
+		if total > srv.recordingsMaxBytes {
+			slog.Warn("recordings size above threshold, cleaning up oldest recordings",
+				"size", bytesize.Format(total),
+				"threshold", bytesize.Format(srv.recordingsMaxBytes))
+
+			for _, file := range files {
+				if err := os.Remove(file.Path); err != nil {
+					slog.Error("failed to remove recording", "file", file.Path, "error", err)
+					continue
+				}
+				deleted = true
+				slog.Debug("removed recording", "file", filepath.Base(file.Path))
+
+				if total -= file.Size; total <= srv.recordingsMaxBytes {
+					slog.Info("recordings size back below threshold",
+						"size", bytesize.Format(total),
+						"threshold", bytesize.Format(srv.recordingsMaxBytes))
+					return true, deleted, nil
+				}
+			}
+
+			return false, deleted, nil
+		}
 	}
 
-	return true, nil
+	return true, deleted, nil
 }

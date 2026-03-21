@@ -35,18 +35,27 @@ type AsciicastV3Recorder struct {
 }
 
 type AsciicastV3Header struct {
-	Version   uint8             `json:"version"`
-	Term      AsciicastV3Term   `json:"term"`
-	Timestamp int64             `json:"timestamp"`
-	Command   string            `json:"command,omitempty"`
-	Title     string            `json:"title,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
+	Version   uint8              `json:"version"`
+	Term      AsciicastV3Term    `json:"term"`
+	Timestamp int64              `json:"timestamp"`
+	Command   string             `json:"command,omitempty"`
+	Title     string             `json:"title,omitempty"`
+	Env       map[string]string  `json:"env,omitempty"`
+	Cardea    *AsciicastV3Cardea `json:"cardea,omitempty"`
 }
 
 type AsciicastV3Term struct {
 	Cols uint32 `json:"cols"`
 	Rows uint32 `json:"rows"`
 	Type string `json:"type,omitempty"`
+}
+
+type AsciicastV3Cardea struct {
+	BackendAddr  string `json:"backend_addr"`
+	FrontendAddr string `json:"frontend_addr"`
+	SessionID    string `json:"session_id"`
+	Fingerprint  string `json:"fingerprint"`
+	Comment      string `json:"comment,omitempty"`
 }
 
 type AsciicastV3Event [3]any
