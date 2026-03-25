@@ -684,7 +684,7 @@ func (l *lexer) scanQuoted() bool {
 		c := l.peek()
 
 		// Escape sequence
-		if c == '\\' && l.peekAt(1) != 0 && l.peekAt(1) != '\n' && l.peekAt(1) != '\r' {
+		if c == '\\' && l.peekAt(1) == '"' {
 			l.emit(tokOther, l.input[l.pos:l.pos+2])
 			l.pos += 2
 			continue
