@@ -2763,11 +2763,6 @@ func TestBastionSSHServer(t *testing.T) {
 							PermitConnects: []PermitConnect{{User: "*", Host: "seq-second.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
-						// [T41]
-						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "unclosed-quote.example.com", Port: "22"}},
-							PermitOpens:    defaultPermitOpens,
-						},
 						// [T43]
 						{
 							PermitConnects: []PermitConnect{{User: "*", Host: "app.prod.us.example.com", Port: "22"}},
