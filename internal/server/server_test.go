@@ -24,11 +24,13 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/hectorm/cardea/pkg/authkeys"
+
 	"github.com/hectorm/cardea/internal/config"
 	"github.com/hectorm/cardea/internal/health"
 	"github.com/hectorm/cardea/internal/server/mock"
-	"github.com/hectorm/cardea/internal/timewindow"
 	"github.com/hectorm/cardea/internal/utils/disk"
+	"github.com/hectorm/cardea/pkg/timewindow"
 )
 
 func setupBastionServer(t testing.TB, authorizedKeysContent, knownHostsContent string, opts ...Option) (*Server, error) {
@@ -2185,7 +2187,7 @@ func TestBastionSSHServer(t *testing.T) {
 		aliceKeyStr := string(aliceKey.Marshal())
 		aliceKeyAuth := marshalAuthorizedKey(aliceKey)
 
-		bobKey, _, _, _, _ := ssh.ParseAuthorizedKey([]byte("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA bob"))
+		bobKey, _, _, _, _ := ssh.ParseAuthorizedKey([]byte("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB bob"))
 		bobKeyStr := string(bobKey.Marshal())
 		bobKeyAuth := marshalAuthorizedKey(bobKey)
 
@@ -2193,7 +2195,7 @@ func TestBastionSSHServer(t *testing.T) {
 		carolKeyStr := string(carolKey.Marshal())
 		carolKeyAuth := marshalAuthorizedKey(carolKey)
 
-		defaultPermitOpens := []PermitTCP{
+		defaultPermitOpens := []authkeys.PermitTCP{
 			{Host: "localhost", Port: "1-65535"},
 			{Host: "127.0.0.1/8", Port: "1-65535"},
 			{Host: "::1/128", Port: "1-65535"},
@@ -2201,7 +2203,7 @@ func TestBastionSSHServer(t *testing.T) {
 
 		tests := []struct {
 			content  string
-			expected map[string][]*AuthorizedKeyOptions
+			expected map[string][]*authkeys.AuthorizedKeyOptions
 		}{
 			{
 				content: fmt.Sprintf(`
@@ -2454,32 +2456,32 @@ func TestBastionSSHServer(t *testing.T) {
 				# [T54] Key comment
 				permitconnect="*@comment.example.com:22" ALICE_KEY alice@laptop
 				`, aliceKeyAuth, bobKeyAuth, carolKeyAuth),
-				expected: map[string][]*AuthorizedKeyOptions{
+				expected: map[string][]*authkeys.AuthorizedKeyOptions{
 					aliceKeyStr: {
 						// [T1]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "basic.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "basic.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T4]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "altformat.example.com", Port: "2222"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "altformat.example.com", Port: "2222"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T7]
 						{
-							PermitConnects:   []PermitConnect{{User: "*", Host: "no-port-fwd.example.com", Port: "22"}},
+							PermitConnects:   []authkeys.PermitConnect{{User: "*", Host: "no-port-fwd.example.com", Port: "22"}},
 							PermitOpens:      defaultPermitOpens,
 							NoPortForwarding: true,
 						},
 						// [T10]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "macro-key.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "macro-key.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T13]
 						{
-							PermitConnects: []PermitConnect{
+							PermitConnects: []authkeys.PermitConnect{
 								{User: "*", Host: "10.0.0.0/24", Port: "22"},
 								{User: "*", Host: "multiline-macro.example.com", Port: "22"},
 								{User: "*", Host: "10.0.1.0/24", Port: "22"},
@@ -2489,27 +2491,27 @@ func TestBastionSSHServer(t *testing.T) {
 						},
 						// [T14]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "nested-macro.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "nested-macro.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T17]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "crlf-comment.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "crlf-comment.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T18]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "inline-define-key.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "inline-define-key.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T19]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "inline-define-team.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "inline-define-team.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T20]
 						{
-							PermitConnects: []PermitConnect{
+							PermitConnects: []authkeys.PermitConnect{
 								{User: "*", Host: "inline-multiline-1.example.com", Port: "22"},
 								{User: "*", Host: "inline-multiline-2.example.com", Port: "22"},
 							},
@@ -2517,99 +2519,99 @@ func TestBastionSSHServer(t *testing.T) {
 						},
 						// [T21]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "inline-rule.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "inline-rule.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T22]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "inline-rule-pipe.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "inline-rule-pipe.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T23]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "pipe-continuation.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "pipe-continuation.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T24]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "macro-pipe.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "macro-pipe.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T27]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "escaped-backslash.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "escaped-backslash.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 							Command:        `echo C:\\path\\file`,
 						},
 						// [T28]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "multi-entry-1.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "multi-entry-1.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T28]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "multi-entry-2.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "multi-entry-2.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T29]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "empty-pipes.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "empty-pipes.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T30]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "empty-macro.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "empty-macro.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T31]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "padded-macro.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "padded-macro.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T32]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "redef-last.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "redef-last.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T33]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "seq-first.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "seq-first.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T34]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "token-boundary.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "token-boundary.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T35]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "tab-define.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "tab-define.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T36]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "underscore-prefix.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "underscore-prefix.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T37]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "alphanumeric-name.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "alphanumeric-name.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T38]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "eof-no-newline.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "eof-no-newline.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T39]
 						{
-							PermitConnects: []PermitConnect{{User: "#user", Host: "hash#host.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "#user", Host: "hash#host.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 							Command:        "echo # not a comment",
 						},
 						// [T40]
 						{
-							PermitConnects: []PermitConnect{
+							PermitConnects: []authkeys.PermitConnect{
 								{User: "*", Host: "hash-adjacent.example.com", Port: "22"},
 								{User: "*", Host: "other#host.example.com", Port: "22"},
 							},
@@ -2617,54 +2619,54 @@ func TestBastionSSHServer(t *testing.T) {
 						},
 						// [T41]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "after-unclosed.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "after-unclosed.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T42]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "opts-template.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "opts-template.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 							Command:        "internal-sftp",
 							NoPty:          true,
 						},
 						// [T45]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "line-template.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "line-template.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T48]
 						{
-							PermitConnects: []PermitConnect{{User: "admin", Host: "user-pattern.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "admin", Host: "user-pattern.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T50]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "nested-team.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "nested-team.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T51]
 						{
-							PermitConnects: []PermitConnect{
+							PermitConnects: []authkeys.PermitConnect{
 								{User: "*", Host: "multi-decl-1.example.com", Port: "22"},
 								{User: "*", Host: "multi-decl-2.example.com", Port: "22"},
 							},
-							PermitOpens: []PermitTCP{
+							PermitOpens: []authkeys.PermitTCP{
 								{Host: "*", Port: "80"},
 								{Host: "*", Port: "443"},
 							},
-							PermitListens: []PermitTCP{
+							PermitListens: []authkeys.PermitTCP{
 								{Host: "localhost", Port: "8080"},
 								{Host: "localhost", Port: "9090"},
 							},
-							PermitSocketOpens: []PermitSocket{
+							PermitSocketOpens: []authkeys.PermitSocket{
 								{Path: "/tmp/first.sock"},
 								{Path: "/tmp/last.sock"},
 							},
-							PermitSocketListens: []PermitSocket{
+							PermitSocketListens: []authkeys.PermitSocket{
 								{Path: "/tmp/first.sock"},
 								{Path: "/tmp/last.sock"},
 							},
-							Environments: []Environment{
+							Environments: []authkeys.Environment{
 								{Name: "FOO", Value: "bar"},
 								{Name: "BAZ", Value: "quux"},
 							},
@@ -2683,7 +2685,7 @@ func TestBastionSSHServer(t *testing.T) {
 						},
 						// [T52]
 						{
-							PermitConnects:     []PermitConnect{{User: "*", Host: "restrict.example.com", Port: "22"}},
+							PermitConnects:     []authkeys.PermitConnect{{User: "*", Host: "restrict.example.com", Port: "22"}},
 							PermitOpens:        defaultPermitOpens,
 							NoPortForwarding:   true,
 							NoSocketForwarding: true,
@@ -2691,7 +2693,7 @@ func TestBastionSSHServer(t *testing.T) {
 						},
 						// [T54]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "comment.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "comment.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 							Comment:        "alice@laptop",
 						},
@@ -2699,7 +2701,7 @@ func TestBastionSSHServer(t *testing.T) {
 					bobKeyStr: {
 						// [T2]
 						{
-							PermitConnects: []PermitConnect{
+							PermitConnects: []authkeys.PermitConnect{
 								{User: "*", Host: "192.168.0.0/16", Port: "22"},
 								{User: "*", Host: "172.16.0.0/12", Port: "22"},
 							},
@@ -2707,18 +2709,18 @@ func TestBastionSSHServer(t *testing.T) {
 						},
 						// [T5]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "2001:db8::1", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "2001:db8::1", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T8]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "command.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "command.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 							Command:        "internal-sftp",
 						},
 						// [T11]
 						{
-							PermitConnects: []PermitConnect{
+							PermitConnects: []authkeys.PermitConnect{
 								{User: "*", Host: "10.0.1.0/24", Port: "22"},
 								{User: "*", Host: "macro-value.example.com", Port: "22"},
 							},
@@ -2726,68 +2728,68 @@ func TestBastionSSHServer(t *testing.T) {
 						},
 						// [T15]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "line-cont-lf.example.com", Port: "22"}},
-							PermitOpens: []PermitTCP{
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "line-cont-lf.example.com", Port: "22"}},
+							PermitOpens: []authkeys.PermitTCP{
 								{Host: "*", Port: "80"},
 								{Host: "*", Port: "443"},
 							},
 						},
 						// [T19]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "inline-define-team.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "inline-define-team.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T22]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "inline-rule-pipe.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "inline-rule-pipe.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T24]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "macro-pipe.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "macro-pipe.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T25]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "pipe-in-command.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "pipe-in-command.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 							Command:        "echo hello | grep h",
 						},
 						// [T29]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "empty-pipes.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "empty-pipes.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T33]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "seq-second.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "seq-second.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T43]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "app.prod.us.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "app.prod.us.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T46]
 						{
-							PermitConnects:   []PermitConnect{{User: "*", Host: "opts-composed.example.com", Port: "22"}},
+							PermitConnects:   []authkeys.PermitConnect{{User: "*", Host: "opts-composed.example.com", Port: "22"}},
 							PermitOpens:      defaultPermitOpens,
 							NoPty:            true,
 							NoPortForwarding: true,
 						},
 						// [T49]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "multi-option.example.com", Port: "22"}},
-							PermitOpens:    []PermitTCP{{Host: "multi-option.example.com", Port: "80"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "multi-option.example.com", Port: "22"}},
+							PermitOpens:    []authkeys.PermitTCP{{Host: "multi-option.example.com", Port: "80"}},
 						},
 						// [T50]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "nested-team.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "nested-team.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T53]
 						{
-							PermitConnects:     []PermitConnect{{User: "*", Host: "restrict-override.example.com", Port: "22"}},
+							PermitConnects:     []authkeys.PermitConnect{{User: "*", Host: "restrict-override.example.com", Port: "22"}},
 							PermitOpens:        defaultPermitOpens,
 							NoPortForwarding:   false,
 							NoSocketForwarding: true,
@@ -2797,27 +2799,27 @@ func TestBastionSSHServer(t *testing.T) {
 					carolKeyStr: {
 						// [T3]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "permitopen.example.com", Port: "22"}},
-							PermitOpens: []PermitTCP{
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "permitopen.example.com", Port: "22"}},
+							PermitOpens: []authkeys.PermitTCP{
 								{Host: "*", Port: "80"},
 								{Host: "*", Port: "443"},
 							},
 						},
 						// [T6]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "no-pty.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "no-pty.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 							NoPty:          true,
 						},
 						// [T9]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "permitlisten.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "permitlisten.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
-							PermitListens:  []PermitTCP{{Host: "localhost", Port: "8080"}},
+							PermitListens:  []authkeys.PermitTCP{{Host: "localhost", Port: "8080"}},
 						},
 						// [T12]
 						{
-							PermitConnects: []PermitConnect{
+							PermitConnects: []authkeys.PermitConnect{
 								{User: "*", Host: "10.0.0.0/24", Port: "22"},
 								{User: "*", Host: "multiline-macro.example.com", Port: "22"},
 							},
@@ -2825,31 +2827,31 @@ func TestBastionSSHServer(t *testing.T) {
 						},
 						// [T16]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "line-cont-crlf.example.com", Port: "22"}},
-							PermitOpens: []PermitTCP{
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "line-cont-crlf.example.com", Port: "22"}},
+							PermitOpens: []authkeys.PermitTCP{
 								{Host: "*", Port: "80"},
 								{Host: "*", Port: "443"},
 							},
 						},
 						// [T23]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "pipe-continuation.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "pipe-continuation.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T26]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "escaped-quotes.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "escaped-quotes.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 							Command:        `echo "hello"`,
 						},
 						// [T29]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "empty-pipes.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "empty-pipes.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T44]
 						{
-							PermitConnects: []PermitConnect{
+							PermitConnects: []authkeys.PermitConnect{
 								{User: "*", Host: "hierarchy-1.example.com", Port: "22"},
 								{User: "*", Host: "hierarchy-2.example.com", Port: "22"},
 							},
@@ -2857,12 +2859,12 @@ func TestBastionSSHServer(t *testing.T) {
 						},
 						// [T47]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "port-abstract.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "port-abstract.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 						// [T50]
 						{
-							PermitConnects: []PermitConnect{{User: "*", Host: "nested-team.example.com", Port: "22"}},
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "nested-team.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
 					},
@@ -3217,9 +3219,9 @@ func TestBastionSSHServer(t *testing.T) {
 
 			for _, tt := range tests {
 				t.Run(tt.name, func(t *testing.T) {
-					db, err := parseAuthorizedKeys([]byte(tt.content))
+					db, _, err := authkeys.ParseFile([]byte(tt.content))
 					if err != nil {
-						t.Fatalf("parseAuthorizedKeys returned error: %v", err)
+						t.Fatalf("ParseFile returned error: %v", err)
 					}
 					if len(db) != 0 {
 						t.Errorf("expected empty db, got %d keys", len(db))

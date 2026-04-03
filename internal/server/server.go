@@ -25,6 +25,8 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
+	"github.com/hectorm/cardea/pkg/authkeys"
+
 	"github.com/hectorm/cardea/internal/config"
 	"github.com/hectorm/cardea/internal/credential"
 	"github.com/hectorm/cardea/internal/metrics"
@@ -54,7 +56,7 @@ type Server struct {
 	sshClientConfig      *ssh.ClientConfig
 	credentialProvider   credential.Provider
 	signer               ssh.Signer
-	authKeysDB           map[string][]*AuthorizedKeyOptions
+	authKeysDB           map[string][]*authkeys.AuthorizedKeyOptions
 	authKeysMu           sync.RWMutex
 	hostKeysCB           ssh.HostKeyCallback
 	hostKeysMu           sync.RWMutex
@@ -198,7 +200,7 @@ func WithCredentialProvider(provider credential.Provider) Option {
 	}
 }
 
-func WithAuthorizedKeysDB(authKeysDB map[string][]*AuthorizedKeyOptions) Option {
+func WithAuthorizedKeysDB(authKeysDB map[string][]*authkeys.AuthorizedKeyOptions) Option {
 	return func(srv *Server) error {
 		srv.authKeysDB = authKeysDB
 		return nil
@@ -382,12 +384,12 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 		return fmt.Errorf("authorized key options not provided")
 	}
 
-	var authKeyOpts AuthorizedKeyOptions
+	var authKeyOpts authkeys.AuthorizedKeyOptions
 	if err := json.Unmarshal([]byte(authKeyOptsStr), &authKeyOpts); err != nil {
 		return err
 	}
 
-	permitconnect, err := parsePermitConnect(frontendConn.User())
+	permitconnect, err := authkeys.ParsePermitConnect(frontendConn.User())
 	if err != nil {
 		return err
 	}
@@ -491,7 +493,7 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 	return nil
 }
 
-func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.Client, authKeyOpts *AuthorizedKeyOptions, newChannel ssh.NewChannel) error {
+func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.Client, authKeyOpts *authkeys.AuthorizedKeyOptions, newChannel ssh.NewChannel) error {
 	backendSession, err := backendConn.NewSession()
 	if err != nil {
 		_ = newChannel.Reject(ssh.ConnectionFailed, "internal error")
@@ -630,7 +632,7 @@ func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.
 }
 
 func (srv *Server) handleRequests(
-	backendSession *ssh.Session, authKeyOpts *AuthorizedKeyOptions, requests <-chan *ssh.Request,
+	backendSession *ssh.Session, authKeyOpts *authkeys.AuthorizedKeyOptions, requests <-chan *ssh.Request,
 	asciicastRec *recorder.AsciicastV3Recorder, asciicastHeader *recorder.AsciicastV3Header,
 ) (bool, error) {
 	started := false
@@ -844,7 +846,7 @@ func (srv *Server) isNonInteractiveCommand(command string) bool {
 	return cmd == "rsync" || cmd == "git" || strings.HasPrefix(cmd, "git-")
 }
 
-func (srv *Server) isClientEnvAllowed(authKeyOpts *AuthorizedKeyOptions, name string) bool {
+func (srv *Server) isClientEnvAllowed(authKeyOpts *authkeys.AuthorizedKeyOptions, name string) bool {
 	allowed := false
 	for _, env := range authKeyOpts.Environments {
 		switch env.Sign {
@@ -865,7 +867,7 @@ func (srv *Server) isClientEnvAllowed(authKeyOpts *AuthorizedKeyOptions, name st
 	return allowed
 }
 
-func (srv *Server) handleDirectTCPIP(backendConn *ssh.Client, authKeyOpts *AuthorizedKeyOptions, newChannel ssh.NewChannel) error {
+func (srv *Server) handleDirectTCPIP(backendConn *ssh.Client, authKeyOpts *authkeys.AuthorizedKeyOptions, newChannel ssh.NewChannel) error {
 	if authKeyOpts.NoPortForwarding {
 		_ = newChannel.Reject(ssh.Prohibited, "port forwarding disabled")
 		return nil
@@ -915,7 +917,7 @@ func (srv *Server) handleDirectTCPIP(backendConn *ssh.Client, authKeyOpts *Autho
 	return nil
 }
 
-func (srv *Server) handleTCPIPForward(backendConn *ssh.Client, authKeyOpts *AuthorizedKeyOptions, req *ssh.Request) error {
+func (srv *Server) handleTCPIPForward(backendConn *ssh.Client, authKeyOpts *authkeys.AuthorizedKeyOptions, req *ssh.Request) error {
 	if authKeyOpts.NoPortForwarding {
 		if req.WantReply {
 			_ = req.Reply(false, nil)
@@ -965,7 +967,7 @@ func (srv *Server) handleTCPIPForward(backendConn *ssh.Client, authKeyOpts *Auth
 	return nil
 }
 
-func (srv *Server) handleForwardedTCPIP(frontendConn *ssh.ServerConn, authKeyOpts *AuthorizedKeyOptions, newChannel ssh.NewChannel) error {
+func (srv *Server) handleForwardedTCPIP(frontendConn *ssh.ServerConn, authKeyOpts *authkeys.AuthorizedKeyOptions, newChannel ssh.NewChannel) error {
 	if authKeyOpts.NoPortForwarding {
 		_ = newChannel.Reject(ssh.Prohibited, "port forwarding disabled")
 		return nil
@@ -1017,7 +1019,7 @@ func (srv *Server) handleForwardedTCPIP(frontendConn *ssh.ServerConn, authKeyOpt
 	return nil
 }
 
-func (srv *Server) handleDirectStreamLocal(backendConn *ssh.Client, authKeyOpts *AuthorizedKeyOptions, newChannel ssh.NewChannel) error {
+func (srv *Server) handleDirectStreamLocal(backendConn *ssh.Client, authKeyOpts *authkeys.AuthorizedKeyOptions, newChannel ssh.NewChannel) error {
 	if authKeyOpts.NoSocketForwarding {
 		_ = newChannel.Reject(ssh.Prohibited, "socket forwarding disabled")
 		return nil
@@ -1064,7 +1066,7 @@ func (srv *Server) handleDirectStreamLocal(backendConn *ssh.Client, authKeyOpts 
 	return nil
 }
 
-func (srv *Server) handleStreamLocalForward(backendConn *ssh.Client, authKeyOpts *AuthorizedKeyOptions, req *ssh.Request) error {
+func (srv *Server) handleStreamLocalForward(backendConn *ssh.Client, authKeyOpts *authkeys.AuthorizedKeyOptions, req *ssh.Request) error {
 	if authKeyOpts.NoSocketForwarding {
 		if req.WantReply {
 			_ = req.Reply(false, nil)
@@ -1111,7 +1113,7 @@ func (srv *Server) handleStreamLocalForward(backendConn *ssh.Client, authKeyOpts
 	return nil
 }
 
-func (srv *Server) handleForwardedStreamLocal(frontendConn *ssh.ServerConn, authKeyOpts *AuthorizedKeyOptions, newChannel ssh.NewChannel) error {
+func (srv *Server) handleForwardedStreamLocal(frontendConn *ssh.ServerConn, authKeyOpts *authkeys.AuthorizedKeyOptions, newChannel ssh.NewChannel) error {
 	if authKeyOpts.NoSocketForwarding {
 		_ = newChannel.Reject(ssh.Prohibited, "socket forwarding disabled")
 		return nil
@@ -1211,7 +1213,7 @@ func (srv *Server) newFrontendConnection(tcpConn net.Conn) (*ssh.ServerConn, <-c
 	return sshConn, channels, requests, nil
 }
 
-func (srv *Server) newBackendConnection(permitconnect *PermitConnect) (*ssh.Client, error) {
+func (srv *Server) newBackendConnection(permitconnect *authkeys.PermitConnect) (*ssh.Client, error) {
 	user, host, port := permitconnect.User, permitconnect.Host, permitconnect.Port
 	addr := net.JoinHostPort(host, port)
 
@@ -1294,7 +1296,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 		return nil, fmt.Errorf("public key not authorized")
 	}
 
-	backend, err := parsePermitConnect(user)
+	backend, err := authkeys.ParsePermitConnect(user)
 	if err != nil {
 		srv.metrics.AuthFailuresInvalidBackendTotal.Add(1)
 		slog.Info("access denied, invalid backend format",
@@ -1306,7 +1308,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 		return nil, fmt.Errorf("public key not authorized")
 	}
 
-	var authKeyOpts *AuthorizedKeyOptions
+	var authKeyOpts *authkeys.AuthorizedKeyOptions
 	var denyReason string
 	var denyComment string
 

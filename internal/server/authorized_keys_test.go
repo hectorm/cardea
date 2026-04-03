@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/hectorm/cardea/pkg/authkeys"
 )
 
 func FuzzAuthorizedKeysParse(f *testing.F) {
@@ -100,7 +102,7 @@ func FuzzAuthorizedKeysParse(f *testing.F) {
 	f.Add("permitconnect=\"user\x00@host:22\"")
 
 	f.Fuzz(func(t *testing.T, content string) {
-		result, err := parseAuthorizedKeys([]byte(content))
+		result, _, err := authkeys.ParseFile([]byte(content))
 		if err != nil {
 			return
 		}

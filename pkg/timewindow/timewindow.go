@@ -9,7 +9,7 @@ import (
 	_ "time/tzdata"
 )
 
-const maxValueLength = 4096
+const MaxValueLength = 4096
 
 type TimeWindow struct {
 	Windows []Window `json:"windows"`
@@ -122,8 +122,8 @@ var constraintDefs = map[string]constraintDef{
 }
 
 func Parse(s string) (*TimeWindow, error) {
-	if len(s) > maxValueLength {
-		return nil, fmt.Errorf("value too long (%d characters, max %d)", len(s), maxValueLength)
+	if len(s) > MaxValueLength {
+		return nil, fmt.Errorf("value too long (%d characters, max %d)", len(s), MaxValueLength)
 	}
 
 	if strings.TrimSpace(s) == "" {
