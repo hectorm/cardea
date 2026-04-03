@@ -14,11 +14,11 @@ GO := go
 GO_TEST_ARGS ?=
 GOFMT := gofmt
 GOFMT_ARGS ?=
-GOSEC := gosec
+GOSEC := go run github.com/securego/gosec/v2/cmd/gosec@latest
 GOSEC_ARGS ?=
-GOVULNCHECK := govulncheck
+GOVULNCHECK := go run golang.org/x/vuln/cmd/govulncheck@latest
 GOVULNCHECK_ARGS ?=
-STATICCHECK := staticcheck
+STATICCHECK := go run honnef.co/go/tools/cmd/staticcheck@latest
 STATICCHECK_ARGS ?=
 INSTALL := install
 
@@ -67,19 +67,19 @@ lint: gofmt gosec govulncheck staticcheck
 
 .PHONY: gofmt
 gofmt:
-	@test -z "$$('$(GOFMT)' -s -l $(GOFMT_ARGS) ./ | tee /dev/stderr)"
+	@test -z "$$($(GOFMT) -s -l $(GOFMT_ARGS) ./ | tee /dev/stderr)"
 
 .PHONY: gosec
 gosec:
-	@'$(GOSEC)' -tests $(GOSEC_ARGS) ./...
+	@$(GOSEC) -tests $(GOSEC_ARGS) ./...
 
 .PHONY: govulncheck
 govulncheck:
-	@'$(GOVULNCHECK)' -test $(GOVULNCHECK_ARGS) ./...
+	@$(GOVULNCHECK) -test $(GOVULNCHECK_ARGS) ./...
 
 .PHONY: staticcheck
 staticcheck:
-	@'$(STATICCHECK)' -tests -checks=all,-ST1000 $(STATICCHECK_ARGS) ./...
+	@$(STATICCHECK) -tests -checks=all,-ST1000 $(STATICCHECK_ARGS) ./...
 
 .PHONY: test
 test:
