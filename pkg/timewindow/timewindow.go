@@ -24,6 +24,14 @@ func (tw *TimeWindow) Contains(t time.Time) bool {
 	return false
 }
 
+func (tw *TimeWindow) String() string {
+	parts := make([]string, len(tw.Windows))
+	for i := range tw.Windows {
+		parts[i] = tw.Windows[i].String()
+	}
+	return strings.Join(parts, ",")
+}
+
 type Range struct {
 	Start int `json:"start"`
 	End   int `json:"end"`
@@ -64,6 +72,43 @@ func (w *Window) Contains(t time.Time) bool {
 	return true
 }
 
+func matchRanges(ranges []Range, val int) bool {
+	if ranges == nil {
+		return true
+	}
+	for _, r := range ranges {
+		if val >= r.Start && val <= r.End {
+			return true
+		}
+	}
+	return false
+}
+
+func (w Window) String() string {
+	var parts []string
+	for _, f := range []struct {
+		name   string
+		ranges []Range
+	}{
+		{"dow", w.DOW}, {"month", w.Month}, {"day", w.Day},
+		{"hour", w.Hour}, {"min", w.Min}, {"sec", w.Sec},
+	} {
+		if f.ranges != nil {
+			parts = append(parts, f.name+":"+formatRanges(f.ranges, constraintDefs[f.name]))
+		}
+	}
+
+	loc := w.Location
+	if loc == nil {
+		loc = time.Local
+	}
+	if loc != time.Local {
+		parts = append(parts, "tz:"+loc.String())
+	}
+
+	return strings.Join(parts, " ")
+}
+
 func (w Window) MarshalJSON() ([]byte, error) {
 	type windowAlias Window
 	loc := "Local"
@@ -100,17 +145,11 @@ func (w *Window) UnmarshalJSON(data []byte) error {
 type constraintDef struct {
 	min   int
 	max   int
-	names map[string]int
+	names []string
 }
 
-var dowNames = map[string]int{
-	"sun": 0, "mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6,
-}
-
-var monthNames = map[string]int{
-	"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
-	"jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
-}
+var dowNames = []string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}
+var monthNames = []string{"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"}
 
 var constraintDefs = map[string]constraintDef{
 	"dow":   {min: 0, max: 6, names: dowNames},
@@ -267,9 +306,10 @@ func parseValue(s string, def constraintDef) (int, error) {
 	}
 
 	// Try name lookup first
-	if def.names != nil {
-		if v, ok := def.names[strings.ToLower(s)]; ok {
-			return v, nil
+	sl := strings.ToLower(s)
+	for i, name := range def.names {
+		if name == sl {
+			return def.min + i, nil
 		}
 	}
 
@@ -297,14 +337,21 @@ func parseValue(s string, def constraintDef) (int, error) {
 	return v, nil
 }
 
-func matchRanges(ranges []Range, val int) bool {
-	if ranges == nil {
-		return true
-	}
-	for _, r := range ranges {
-		if val >= r.Start && val <= r.End {
-			return true
+func formatRanges(ranges []Range, def constraintDef) string {
+	parts := make([]string, len(ranges))
+	for i, r := range ranges {
+		s := formatValue(r.Start, def)
+		if r.Start != r.End {
+			s += "-" + formatValue(r.End, def)
 		}
+		parts[i] = s
 	}
-	return false
+	return strings.Join(parts, "/")
+}
+
+func formatValue(v int, def constraintDef) string {
+	if i := v - def.min; i >= 0 && i < len(def.names) {
+		return def.names[i]
+	}
+	return strconv.Itoa(v)
 }

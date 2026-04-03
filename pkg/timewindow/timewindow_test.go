@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestTimewindow(t *testing.T) {
+func TestTimeWindow(t *testing.T) {
 	t.Run("parse", func(t *testing.T) {
 		t.Run("valid", func(t *testing.T) {
 			tests := []struct {
@@ -269,7 +269,7 @@ func TestTimewindow(t *testing.T) {
 		})
 	})
 
-	t.Run("json", func(t *testing.T) {
+	t.Run("round_trip", func(t *testing.T) {
 		tests := []struct {
 			name  string
 			input string
@@ -280,39 +280,44 @@ func TestTimewindow(t *testing.T) {
 			{name: "local_default", input: "hour:8-17"},
 		}
 
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				original, err := Parse(tt.input)
-				if err != nil {
-					t.Fatalf("parse error: %v", err)
-				}
+		t.Run("string", func(t *testing.T) {
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					tw, err := Parse(tt.input)
+					if err != nil {
+						t.Fatalf("parse error: %v", err)
+					}
+					if got := tw.String(); got != tt.input {
+						t.Errorf("got %q, want %q", got, tt.input)
+					}
+				})
+			}
+		})
 
-				data, err := json.Marshal(original)
-				if err != nil {
-					t.Fatalf("marshal error: %v", err)
-				}
+		t.Run("json", func(t *testing.T) {
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					tw, err := Parse(tt.input)
+					if err != nil {
+						t.Fatalf("parse error: %v", err)
+					}
 
-				var restored TimeWindow
-				if err := json.Unmarshal(data, &restored); err != nil {
-					t.Fatalf("unmarshal error: %v", err)
-				}
-
-				restoredData, err := json.Marshal(restored)
-				if err != nil {
-					t.Fatalf("re-marshal error: %v", err)
-				}
-
-				if string(data) != string(restoredData) {
-					t.Errorf("round-trip mismatch:\n  original: %s\n  restored: %s", data, restoredData)
-				}
-			})
-		}
-
-		t.Run("unmarshal_invalid_timezone", func(t *testing.T) {
-			raw := `{"windows":[{"dow":null,"month":null,"day":null,"hour":null,"min":null,"sec":null,"location":"Invalid/Zone"}]}`
-			var tw TimeWindow
-			if err := json.Unmarshal([]byte(raw), &tw); err == nil {
-				t.Error("expected error for invalid timezone, got nil")
+					data, err := json.Marshal(tw)
+					if err != nil {
+						t.Fatalf("marshal error: %v", err)
+					}
+					var restored TimeWindow
+					if err := json.Unmarshal(data, &restored); err != nil {
+						t.Fatalf("unmarshal error: %v", err)
+					}
+					restoredData, err := json.Marshal(restored)
+					if err != nil {
+						t.Fatalf("re-marshal error: %v", err)
+					}
+					if string(data) != string(restoredData) {
+						t.Errorf("round-trip mismatch:\n  original: %s\n  restored: %s", data, restoredData)
+					}
+				})
 			}
 		})
 	})

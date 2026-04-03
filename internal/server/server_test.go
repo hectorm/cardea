@@ -8,7 +8,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
-	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -2988,21 +2987,9 @@ func TestBastionSSHServer(t *testing.T) {
 							t.Errorf("expected time-window %v for key, got %v", expectedOpts.TimeWindow, opts.TimeWindow)
 							return
 						}
-						if opts.TimeWindow != nil {
-							got, err := json.Marshal(opts.TimeWindow)
-							if err != nil {
-								t.Errorf("failed to marshal time-window: %v", err)
-								return
-							}
-							expected, err := json.Marshal(expectedOpts.TimeWindow)
-							if err != nil {
-								t.Errorf("failed to marshal expected time-window: %v", err)
-								return
-							}
-							if string(got) != string(expected) {
-								t.Errorf("expected time-window %s for key, got %s", expected, got)
-								return
-							}
+						if opts.TimeWindow != nil && opts.TimeWindow.String() != expectedOpts.TimeWindow.String() {
+							t.Errorf("expected time-window %s for key, got %s", expectedOpts.TimeWindow, opts.TimeWindow)
+							return
 						}
 						if opts.Command != expectedOpts.Command {
 							t.Errorf("expected command %q for key, got %q", expectedOpts.Command, opts.Command)
