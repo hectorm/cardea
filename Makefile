@@ -90,7 +90,7 @@ install:
 	@mkdir -p '$(DESTDIR)$(bindir)'
 	$(INSTALL_PROGRAM) './dist/$(EXEC)' '$(DESTDIR)$(bindir)/cardea'
 
-PHONY: installcheck
+.PHONY: installcheck
 installcheck:
 	@test -x '$(DESTDIR)$(bindir)/cardea'
 
