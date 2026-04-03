@@ -108,9 +108,29 @@ jobs:
         run: |
           make staticcheck
 
+  modernize:
+    name: "Run modernize"
+    runs-on: "ubuntu-latest"
+    permissions:
+      contents: "read"
+    steps:
+      - name: "Checkout"
+        uses: "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
+      - name: "Get Go version"
+        id: "go-version"
+        uses: "./.github/actions/go-version"
+      - name: "Set up Go"
+        uses: "actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417"
+        with:
+          go-version: "${{ steps.go-version.outputs.version }}"
+          check-latest: true
+      - name: "Run modernize"
+        run: |
+          make modernize
+
   test:
     name: "Test on ${{ matrix.os }}"
-    needs: ["gofmt", "gosec", "govulncheck", "staticcheck"]
+    needs: ["gofmt", "gosec", "govulncheck", "staticcheck", "modernize"]
     runs-on: "${{ matrix.os }}"
     permissions:
       contents: "read"

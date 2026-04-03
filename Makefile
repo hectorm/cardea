@@ -20,6 +20,8 @@ GOVULNCHECK := go run golang.org/x/vuln/cmd/govulncheck@latest
 GOVULNCHECK_ARGS ?=
 STATICCHECK := go run honnef.co/go/tools/cmd/staticcheck@latest
 STATICCHECK_ARGS ?=
+MODERNIZE := go run golang.org/x/tools/go/analysis/passes/modernize/cmd/modernize@latest
+MODERNIZE_ARGS ?=
 INSTALL := install
 
 INSTALL_PROGRAM := $(INSTALL)
@@ -63,7 +65,7 @@ run: ./dist/$(EXEC)
 	'$(GO)' build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o '$@' ./cmd/cardea/
 
 .PHONY: lint
-lint: gofmt gosec govulncheck staticcheck
+lint: gofmt gosec govulncheck staticcheck modernize
 
 .PHONY: gofmt
 gofmt:
@@ -80,6 +82,10 @@ govulncheck:
 .PHONY: staticcheck
 staticcheck:
 	@$(STATICCHECK) -tests -checks=all,-ST1000 $(STATICCHECK_ARGS) ./...
+
+.PHONY: modernize
+modernize:
+	@$(MODERNIZE) -test $(MODERNIZE_ARGS) ./...
 
 .PHONY: test
 test:
