@@ -24,7 +24,7 @@ jobs:
         id: "go-version"
         uses: "./.github/actions/go-version"
       - name: "Set up Go"
-        uses: "actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417"
+        uses: "actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c"
         with:
           go-version: "${{ steps.go-version.outputs.version }}"
           check-latest: true
@@ -45,7 +45,7 @@ jobs:
         id: "go-version"
         uses: "./.github/actions/go-version"
       - name: "Set up Go"
-        uses: "actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417"
+        uses: "actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c"
         with:
           go-version: "${{ steps.go-version.outputs.version }}"
           check-latest: true
@@ -76,7 +76,7 @@ jobs:
         id: "go-version"
         uses: "./.github/actions/go-version"
       - name: "Set up Go"
-        uses: "actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417"
+        uses: "actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c"
         with:
           go-version: "${{ steps.go-version.outputs.version }}"
           check-latest: true
@@ -106,7 +106,7 @@ jobs:
         id: "go-version"
         uses: "./.github/actions/go-version"
       - name: "Set up Go"
-        uses: "actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417"
+        uses: "actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c"
         with:
           go-version: "${{ steps.go-version.outputs.version }}"
           check-latest: true
@@ -134,7 +134,7 @@ jobs:
         id: "go-version"
         uses: "./.github/actions/go-version"
       - name: "Set up Go"
-        uses: "actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417"
+        uses: "actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c"
         with:
           go-version: "${{ steps.go-version.outputs.version }}"
           check-latest: true
@@ -196,7 +196,7 @@ jobs:
         id: "go-version"
         uses: "./.github/actions/go-version"
       - name: "Set up Go"
-        uses: "actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417"
+        uses: "actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c"
         with:
           go-version: "${{ steps.go-version.outputs.version }}"
           check-latest: true
@@ -240,14 +240,14 @@ jobs:
         uses: "hectorm/ghaction-docker-buildx-setup@fec3efdbb455c2aa58a4fbfd11a9853f5de2cdba"
       - name: "Login to GitHub Container Registry"
         if: "github.event_name != 'pull_request'"
-        uses: "docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2"
+        uses: "docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121"
         with:
           registry: "ghcr.io"
           username: "${{ github.actor }}"
           password: "${{ secrets.GITHUB_TOKEN }}"
       - name: "Login to Docker Hub"
         if: "github.event_name != 'pull_request'"
-        uses: "docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2"
+        uses: "docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121"
         with:
           registry: "docker.io"
           username: "${{ secrets.DOCKERHUB_USERNAME }}"
