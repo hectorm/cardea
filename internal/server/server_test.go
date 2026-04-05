@@ -1061,7 +1061,7 @@ func TestBastionSSHServer(t *testing.T) {
 		cli.User = fmt.Sprintf("alice@%s", mockAddr)
 		cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
 
-		t.Run("exec_echo", func(t *testing.T) {
+		t.Run("exec_no_pty", func(t *testing.T) {
 			recordingsDir := t.TempDir()
 			bastionSrv, err := setupBastionServer(t,
 				fmt.Sprintf(`permitconnect="alice@%s" %s`, mockAddr, cliAuthorizedKeyStr),
@@ -1089,15 +1089,16 @@ func TestBastionSSHServer(t *testing.T) {
 			}
 			defer func() { _ = session.Close() }()
 
-			t.Run("echo", func(t *testing.T) {
-				if output, err := session.Output("echo Hello, World!"); err != nil {
-					t.Errorf("failed to execute command: %v", err)
-					return
-				} else if expectedOutput := "Hello, World!\r\n"; string(output) != expectedOutput {
-					t.Errorf("unexpected output: got %q, want %q", string(output), expectedOutput)
-					return
-				}
-			})
+			if err := session.Run("exit 42"); err == nil {
+				t.Errorf("expected non-zero exit status")
+				return
+			} else if exitErr, ok := err.(*ssh.ExitError); !ok {
+				t.Errorf("expected ExitError, got %T: %v", err, err)
+				return
+			} else if exitErr.ExitStatus() != 42 {
+				t.Errorf("unexpected exit status: got %d, want 42", exitErr.ExitStatus())
+				return
+			}
 
 			if err := waitFor(2*time.Second, func() error {
 				files, err := filepath.Glob(filepath.Join(recordingsDir, "[0-9][0-9][0-9][0-9]", "[0-9][0-9]", "[0-9][0-9]", "*.cast.gz"))
@@ -1112,70 +1113,17 @@ func TestBastionSSHServer(t *testing.T) {
 				if err != nil {
 					return fmt.Errorf("failed to read recording: %w", err)
 				}
-				if !strings.Contains(string(content), "Hello, World!") {
-					return fmt.Errorf("recording does not contain expected output: %q", string(content))
+				if !strings.Contains(string(content), `"command":"exit 42"`) {
+					return fmt.Errorf("recording should contain command in header: %q", string(content))
 				}
-
-				return nil
-			}); err != nil {
-				t.Error(err)
-				return
-			}
-		})
-
-		t.Run("exec_rsync", func(t *testing.T) {
-			recordingsDir := t.TempDir()
-			bastionSrv, err := setupBastionServer(t,
-				fmt.Sprintf(`permitconnect="alice@%s" %s`, mockAddr, cliAuthorizedKeyStr),
-				fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
-				func(srv *Server) error {
-					srv.config.RecordingsDir = recordingsDir
-					return nil
-				},
-			)
-			if err != nil {
-				t.Errorf("failed to setup bastion server: %v", err)
-				return
-			}
-
-			bastionConn, err := connectToServer(t, cli, bastionSrv)
-			if err != nil {
-				t.Errorf("failed to connect to server: %v", err)
-				return
-			}
-
-			session, err := bastionConn.NewSession()
-			if err != nil {
-				t.Errorf("failed to create session: %v", err)
-				return
-			}
-			defer func() { _ = session.Close() }()
-
-			t.Run("rsync", func(t *testing.T) {
-				if output, err := session.Output("rsync --server"); err != nil {
-					t.Errorf("failed to execute command: %v", err)
-					return
-				} else if expectedOutput := "mock: rsync: NOOP\r\n"; string(output) != expectedOutput {
-					t.Errorf("unexpected output: got %q, want %q", string(output), expectedOutput)
-					return
+				if !strings.Contains(string(content), "$ exit 42") {
+					return fmt.Errorf("recording should contain command in output: %q", string(content))
 				}
-			})
-
-			if err := waitFor(2*time.Second, func() error {
-				files, err := filepath.Glob(filepath.Join(recordingsDir, "[0-9][0-9][0-9][0-9]", "[0-9][0-9]", "[0-9][0-9]", "*.cast.gz"))
-				if err != nil {
-					return fmt.Errorf("failed to glob for recordings: %w", err)
+				if !strings.Contains(string(content), "[recording paused]") {
+					return fmt.Errorf("recording should contain pause message: %q", string(content))
 				}
-				if len(files) != 1 {
-					return fmt.Errorf("expected 1 recording, got %d", len(files))
-				}
-
-				content, err := readGzipFile(files[0])
-				if err != nil {
-					return fmt.Errorf("failed to read recording: %w", err)
-				}
-				if strings.Contains(string(content), "mock: rsync: NOOP") {
-					return fmt.Errorf("recording should not contain rsync output: %q", string(content))
+				if !strings.Contains(string(content), `,"x","42"]`) {
+					return fmt.Errorf("recording should contain exit event with status 42: %q", string(content))
 				}
 
 				return nil

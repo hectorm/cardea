@@ -634,6 +634,7 @@ func (srv *Server) handleRequests(
 	asciicastRec *recorder.AsciicastV3Recorder, asciicastHeader *recorder.AsciicastV3Header,
 ) (bool, error) {
 	started := false
+	ptyRequested := false
 	for req := range requests {
 		ok := false
 		switch req.Type {
@@ -683,6 +684,7 @@ func (srv *Server) handleRequests(
 				slog.Error("failed to request pty", "error", err)
 				break
 			}
+			ptyRequested = true
 			ok = true
 		case "window-change":
 			var payload struct {
@@ -750,9 +752,9 @@ func (srv *Server) handleRequests(
 					slog.Error("failed to write header", "error", err)
 					break
 				}
-				if srv.isNonInteractiveCommand(command) {
-					if err := asciicastRec.WriteExit(0); err != nil {
-						slog.Error("failed to write exit event", "error", err)
+				if !ptyRequested {
+					if err := asciicastRec.Pause(command); err != nil {
+						slog.Error("failed to pause recording", "error", err)
 						break
 					}
 				}
@@ -770,9 +772,9 @@ func (srv *Server) handleRequests(
 					slog.Error("failed to write header", "error", err)
 					break
 				}
-				if srv.isNonInteractiveCommand(command) {
-					if err := asciicastRec.WriteExit(0); err != nil {
-						slog.Error("failed to write exit event", "error", err)
+				if !ptyRequested {
+					if err := asciicastRec.Pause(command); err != nil {
+						slog.Error("failed to pause recording", "error", err)
 						break
 					}
 				}
@@ -809,9 +811,11 @@ func (srv *Server) handleRequests(
 						slog.Error("failed to write header", "error", err)
 						break
 					}
-					if err := asciicastRec.WriteExit(0); err != nil {
-						slog.Error("failed to write exit event", "error", err)
-						break
+					if !ptyRequested {
+						if err := asciicastRec.Pause("internal-sftp"); err != nil {
+							slog.Error("failed to pause recording", "error", err)
+							break
+						}
 					}
 				}
 				if err := backendSession.RequestSubsystem(payload.Subsystem); err != nil {
@@ -833,15 +837,6 @@ func (srv *Server) handleRequests(
 	}
 
 	return started, nil
-}
-
-func (srv *Server) isNonInteractiveCommand(command string) bool {
-	fields := strings.Fields(command)
-	if len(fields) == 0 {
-		return false
-	}
-	cmd := filepath.Base(fields[0])
-	return cmd == "rsync" || cmd == "git" || strings.HasPrefix(cmd, "git-")
 }
 
 func (srv *Server) isClientEnvAllowed(authKeyOpts *authkeys.AuthorizedKeyOptions, name string) bool {

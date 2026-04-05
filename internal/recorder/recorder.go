@@ -31,6 +31,7 @@ type AsciicastV3Recorder struct {
 	pending int
 	timer   *time.Timer
 	prev    time.Time
+	paused  bool
 	mu      sync.Mutex
 }
 
@@ -148,7 +149,7 @@ func (r *AsciicastV3Recorder) WriteResize(cols, rows uint32) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.writer == nil {
+	if r.writer == nil || r.paused {
 		return nil
 	}
 
@@ -176,7 +177,7 @@ func (r *AsciicastV3Recorder) Write(p []byte) (n int, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.writer == nil {
+	if r.writer == nil || r.paused {
 		return len(p), nil
 	}
 
@@ -198,6 +199,46 @@ func (r *AsciicastV3Recorder) Write(p []byte) (n int, err error) {
 	r.scheduleFlush()
 
 	return len(p), nil
+}
+
+func (r *AsciicastV3Recorder) Pause(command string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.writer == nil || r.paused {
+		return nil
+	}
+
+	msg := "[recording paused]\r\n"
+	if command != "" {
+		msg = "$ " + command + "\r\n" + msg
+	}
+
+	now := time.Now()
+	event := AsciicastV3Event{now.Sub(r.prev).Seconds(), "o", msg}
+	r.prev = now
+
+	eventBytes, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+
+	eventLine := append(eventBytes, '\n')
+	if _, err := r.writer.Write(eventLine); err != nil {
+		return err
+	}
+
+	r.pending += len(eventLine)
+	r.scheduleFlush()
+
+	r.paused = true
+	return nil
+}
+
+func (r *AsciicastV3Recorder) Resume() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.paused = false
 }
 
 func (r *AsciicastV3Recorder) Close() error {
