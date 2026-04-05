@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bufio"
+	"bytes"
 	"os"
 	"path/filepath"
 
@@ -8,7 +10,12 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
-func (srv *Server) newHostKeysCB(path string) (ssh.HostKeyCallback, error) {
+type hostKeysDB struct {
+	cb      ssh.HostKeyCallback
+	caLines map[int]struct{}
+}
+
+func (srv *Server) newHostKeysDB(path string) (*hostKeysDB, error) {
 	path = filepath.Clean(path)
 
 	if f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600); err == nil {
@@ -17,9 +24,28 @@ func (srv *Server) newHostKeysCB(path string) (ssh.HostKeyCallback, error) {
 		return nil, err
 	}
 
-	hostKeysCB, err := knownhosts.New(path)
+	cb, err := knownhosts.New(path)
 	if err != nil {
 		return nil, err
 	}
-	return hostKeysCB, nil
+
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	caLines := make(map[int]struct{})
+	sc := bufio.NewScanner(f)
+	for lineNum := 1; sc.Scan(); lineNum++ {
+		line := bytes.TrimSpace(sc.Bytes())
+		if bytes.HasPrefix(line, []byte("@cert-authority ")) {
+			caLines[lineNum] = struct{}{}
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+
+	return &hostKeysDB{cb: cb, caLines: caLines}, nil
 }

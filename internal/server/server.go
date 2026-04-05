@@ -54,9 +54,9 @@ type Server struct {
 	sshClientConfig      *ssh.ClientConfig
 	credentialProvider   credential.Provider
 	signer               ssh.Signer
-	authKeysDB           map[string][]*authkeys.AuthorizedKeyOptions
+	authKeysDB           authKeysDB
 	authKeysMu           sync.RWMutex
-	hostKeysCB           ssh.HostKeyCallback
+	hostKeysDB           *hostKeysDB
 	hostKeysMu           sync.RWMutex
 	banner               string
 	bannerMu             sync.RWMutex
@@ -144,12 +144,12 @@ func NewServer(cfg *config.Config, opts ...Option) (*Server, error) {
 		srv.authKeysDB = authKeysDB
 	}
 
-	if srv.hostKeysCB == nil {
-		hostKeysCB, err := srv.newHostKeysCB(srv.config.KnownHostsFile)
+	if srv.hostKeysDB == nil {
+		hostKeysDB, err := srv.newHostKeysDB(srv.config.KnownHostsFile)
 		if err != nil {
 			return nil, err
 		}
-		srv.hostKeysCB = hostKeysCB
+		srv.hostKeysDB = hostKeysDB
 	}
 
 	if srv.config.BannerFile != "" {
@@ -198,16 +198,16 @@ func WithCredentialProvider(provider credential.Provider) Option {
 	}
 }
 
-func WithAuthorizedKeysDB(authKeysDB map[string][]*authkeys.AuthorizedKeyOptions) Option {
+func WithAuthorizedKeysDB(authKeysDB authKeysDB) Option {
 	return func(srv *Server) error {
 		srv.authKeysDB = authKeysDB
 		return nil
 	}
 }
 
-func WithHostKeysCB(hostKeysCB ssh.HostKeyCallback) Option {
+func WithHostKeysDB(hostKeysDB *hostKeysDB) Option {
 	return func(srv *Server) error {
-		srv.hostKeysCB = hostKeysCB
+		srv.hostKeysDB = hostKeysDB
 		return nil
 	}
 }
@@ -1415,10 +1415,10 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 
 func (srv *Server) hostKeyCallback(host string, remote net.Addr, key ssh.PublicKey) error {
 	srv.hostKeysMu.RLock()
-	hkCb := srv.hostKeysCB
+	hkDB := srv.hostKeysDB
 	srv.hostKeysMu.RUnlock()
 
-	if cbErr := hkCb(host, remote, key); cbErr != nil {
+	if cbErr := hkDB.cb(host, remote, key); cbErr != nil {
 		var khErr *knownhosts.KeyError
 		if !errors.As(cbErr, &khErr) {
 			return cbErr
@@ -1462,13 +1462,13 @@ func (srv *Server) hostKeyCallback(host string, remote net.Addr, key ssh.PublicK
 
 func (srv *Server) hostKeyAlgorithms(host string) ([]string, error) {
 	srv.hostKeysMu.RLock()
-	hkCb := srv.hostKeysCB
+	hkDB := srv.hostKeysDB
 	srv.hostKeysMu.RUnlock()
 
 	remote := &net.TCPAddr{IP: net.IPv4zero, Port: 22}
 	key := srv.signer.PublicKey()
 
-	if cbErr := hkCb(host, remote, key); cbErr != nil {
+	if cbErr := hkDB.cb(host, remote, key); cbErr != nil {
 		var khErr *knownhosts.KeyError
 		if errors.As(cbErr, &khErr) && len(khErr.Want) > 0 {
 			// Collect cert algorithms first, then base algorithms.
@@ -1489,6 +1489,19 @@ func (srv *Server) hostKeyAlgorithms(host string) ([]string, error) {
 				}
 			}
 			for _, want := range khErr.Want {
+				if _, isCA := hkDB.caLines[want.Line]; isCA {
+					// A CA can sign any key type, so we cannot infer the host certificate algorithm from the CA key.
+					// Prefer all cert algorithms, matching OpenSSH's order_hostkeyalgs behavior for @cert-authority.
+					addCert(ssh.CertAlgoED25519v01)
+					addCert(ssh.CertAlgoSKED25519v01)
+					addCert(ssh.CertAlgoECDSA256v01)
+					addCert(ssh.CertAlgoSKECDSA256v01)
+					addCert(ssh.CertAlgoECDSA384v01)
+					addCert(ssh.CertAlgoECDSA521v01)
+					addCert(ssh.CertAlgoRSASHA512v01)
+					addCert(ssh.CertAlgoRSASHA256v01)
+					continue
+				}
 				switch want.Key.Type() {
 				case ssh.KeyAlgoED25519:
 					addBase(ssh.KeyAlgoED25519)
@@ -1611,12 +1624,12 @@ func (srv *Server) fileWatcher() {
 							slog.Debug("reloaded authorized keys file", "file", file)
 						}
 					case knownHostsFile:
-						hostKeysCB, err := srv.newHostKeysCB(file)
+						hostKeysDB, err := srv.newHostKeysDB(file)
 						if err != nil {
 							slog.Error("error reloading known hosts file", "error", err)
 						} else {
 							srv.hostKeysMu.Lock()
-							srv.hostKeysCB = hostKeysCB
+							srv.hostKeysDB = hostKeysDB
 							srv.hostKeysMu.Unlock()
 							slog.Debug("reloaded known hosts file", "file", file)
 						}

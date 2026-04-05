@@ -3336,157 +3336,140 @@ func TestBastionSSHServer(t *testing.T) {
 		})
 
 		t.Run("ca", func(t *testing.T) {
-			gen := func(kind string) (caPrivateKey, srvPrivateKey crypto.PrivateKey, err error) {
+			type keyAlgo struct {
+				name string
+				key  crypto.PrivateKey
+			}
+
+			genKey := func(kind string) crypto.PrivateKey {
+				t.Helper()
 				switch kind {
 				case ssh.KeyAlgoED25519:
-					_, ca, err := ed25519.GenerateKey(rand.Reader)
+					_, key, err := ed25519.GenerateKey(rand.Reader)
 					if err != nil {
-						return nil, nil, err
+						t.Fatalf("failed to generate %s key: %v", kind, err)
 					}
-					_, srv, err := ed25519.GenerateKey(rand.Reader)
-					if err != nil {
-						return nil, nil, err
-					}
-					return ca, srv, nil
+					return key
 				case ssh.KeyAlgoECDSA256:
-					ca, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+					key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 					if err != nil {
-						return nil, nil, err
+						t.Fatalf("failed to generate %s key: %v", kind, err)
 					}
-					srv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-					if err != nil {
-						return nil, nil, err
-					}
-					return ca, srv, nil
+					return key
 				case ssh.KeyAlgoECDSA384:
-					ca, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+					key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 					if err != nil {
-						return nil, nil, err
+						t.Fatalf("failed to generate %s key: %v", kind, err)
 					}
-					srv, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
-					if err != nil {
-						return nil, nil, err
-					}
-					return ca, srv, nil
+					return key
 				case ssh.KeyAlgoECDSA521:
-					ca, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
+					key, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
 					if err != nil {
-						return nil, nil, err
+						t.Fatalf("failed to generate %s key: %v", kind, err)
 					}
-					srv, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
-					if err != nil {
-						return nil, nil, err
-					}
-					return ca, srv, nil
+					return key
 				case ssh.KeyAlgoRSA:
-					ca, err := rsa.GenerateKey(rand.Reader, 2048)
+					key, err := rsa.GenerateKey(rand.Reader, 2048)
 					if err != nil {
-						return nil, nil, err
+						t.Fatalf("failed to generate %s key: %v", kind, err)
 					}
-					srv, err := rsa.GenerateKey(rand.Reader, 2048)
-					if err != nil {
-						return nil, nil, err
-					}
-					return ca, srv, nil
+					return key
 				default:
-					return nil, nil, fmt.Errorf("unsupported key type %q", kind)
+					t.Fatalf("unsupported key type %q", kind)
+					return nil
 				}
 			}
 
-			keys := []string{
-				ssh.KeyAlgoED25519,
-				ssh.KeyAlgoECDSA256,
-				ssh.KeyAlgoECDSA384,
-				ssh.KeyAlgoECDSA521,
-				ssh.KeyAlgoRSA,
+			keys := []keyAlgo{
+				{ssh.KeyAlgoED25519, genKey(ssh.KeyAlgoED25519)},
+				{ssh.KeyAlgoECDSA256, genKey(ssh.KeyAlgoECDSA256)},
+				{ssh.KeyAlgoECDSA384, genKey(ssh.KeyAlgoECDSA384)},
+				{ssh.KeyAlgoECDSA521, genKey(ssh.KeyAlgoECDSA521)},
+				{ssh.KeyAlgoRSA, genKey(ssh.KeyAlgoRSA)},
 			}
 
-			for _, k := range keys {
-				t.Run(k, func(t *testing.T) {
-					caPrivateKey, srvPrivateKey, err := gen(k)
-					if err != nil {
-						t.Errorf("failed to generate %s keys: %v", k, err)
-						return
-					}
+			for _, ca := range keys {
+				for _, srv := range keys {
+					t.Run(fmt.Sprintf("ca_%s/srv_%s", ca.name, srv.name), func(t *testing.T) {
+						caSigner, err := ssh.NewSignerFromKey(ca.key)
+						if err != nil {
+							t.Errorf("failed to create CA signer: %v", err)
+							return
+						}
+						caAuthorizedKeyStr := marshalAuthorizedKey(caSigner.PublicKey())
 
-					caSigner, err := ssh.NewSignerFromKey(caPrivateKey)
-					if err != nil {
-						t.Errorf("failed to create CA signer: %v", err)
-						return
-					}
-					caAuthorizedKeyStr := marshalAuthorizedKey(caSigner.PublicKey())
+						srvSigner, err := ssh.NewSignerFromKey(srv.key)
+						if err != nil {
+							t.Errorf("failed to create host signer: %v", err)
+							return
+						}
 
-					srvSigner, err := ssh.NewSignerFromKey(srvPrivateKey)
-					if err != nil {
-						t.Errorf("failed to create host signer: %v", err)
-						return
-					}
+						srvCert := &ssh.Certificate{
+							Key:             srvSigner.PublicKey(),
+							Serial:          1,
+							CertType:        ssh.HostCert,
+							ValidPrincipals: []string{"localhost", "127.0.0.1", "::1"},
+							ValidAfter:      0,
+							ValidBefore:     math.MaxUint64,
+							Permissions:     ssh.Permissions{},
+						}
+						if err := srvCert.SignCert(rand.Reader, caSigner); err != nil {
+							t.Errorf("failed to sign certificate: %v", err)
+							return
+						}
 
-					srvCert := &ssh.Certificate{
-						Key:             srvSigner.PublicKey(),
-						Serial:          1,
-						CertType:        ssh.HostCert,
-						ValidPrincipals: []string{"localhost", "127.0.0.1", "::1"},
-						ValidAfter:      0,
-						ValidBefore:     math.MaxUint64,
-						Permissions:     ssh.Permissions{},
-					}
-					if err := srvCert.SignCert(rand.Reader, caSigner); err != nil {
-						t.Errorf("failed to sign certificate: %v", err)
-						return
-					}
+						srvCertSigner, err := ssh.NewCertSigner(srvCert, srvSigner)
+						if err != nil {
+							t.Errorf("failed to create cert signer: %v", err)
+							return
+						}
 
-					srvCertSigner, err := ssh.NewCertSigner(srvCert, srvSigner)
-					if err != nil {
-						t.Errorf("failed to create cert signer: %v", err)
-						return
-					}
+						mockWithCertSrv, err := setupMockServer(t, mock.WithSigner(srvCertSigner))
+						if err != nil {
+							t.Errorf("failed to setup mock server: %v", err)
+							return
+						}
+						mockWithCertAddr := mockWithCertSrv.Address()
 
-					mockWithCertSrv, err := setupMockServer(t, mock.WithSigner(srvCertSigner))
-					if err != nil {
-						t.Errorf("failed to setup mock server: %v", err)
-						return
-					}
-					mockWithCertAddr := mockWithCertSrv.Address()
+						cli, cliPublicKey, err := setupClient(t)
+						if err != nil {
+							t.Errorf("failed to setup client: %v", err)
+							return
+						}
+						cli.User = fmt.Sprintf("alice@%s", mockWithCertAddr)
+						cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
 
-					cli, cliPublicKey, err := setupClient(t)
-					if err != nil {
-						t.Errorf("failed to setup client: %v", err)
-						return
-					}
-					cli.User = fmt.Sprintf("alice@%s", mockWithCertAddr)
-					cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
+						bastionSrv, err := setupBastionServer(t,
+							fmt.Sprintf(`permitconnect="alice@%s" %s`, mockWithCertAddr, cliAuthorizedKeyStr),
+							fmt.Sprintf("@cert-authority *:%d %s", mockWithCertAddr.Port, caAuthorizedKeyStr),
+						)
+						if err != nil {
+							t.Errorf("failed to setup bastion server: %v", err)
+							return
+						}
 
-					bastionSrv, err := setupBastionServer(t,
-						fmt.Sprintf(`permitconnect="alice@%s" %s`, mockWithCertAddr, cliAuthorizedKeyStr),
-						fmt.Sprintf("@cert-authority *:%d %s", mockWithCertAddr.Port, caAuthorizedKeyStr),
-					)
-					if err != nil {
-						t.Errorf("failed to setup bastion server: %v", err)
-						return
-					}
+						bastionConn, err := connectToServer(t, cli, bastionSrv)
+						if err != nil {
+							t.Errorf("failed to connect to server: %v", err)
+							return
+						}
 
-					bastionConn, err := connectToServer(t, cli, bastionSrv)
-					if err != nil {
-						t.Errorf("failed to connect to server: %v", err)
-						return
-					}
+						session, err := bastionConn.NewSession()
+						if err != nil {
+							t.Errorf("failed to create session: %v", err)
+							return
+						}
+						defer func() { _ = session.Close() }()
 
-					session, err := bastionConn.NewSession()
-					if err != nil {
-						t.Errorf("failed to create session: %v", err)
-						return
-					}
-					defer func() { _ = session.Close() }()
-
-					if output, err := session.Output("echo Hello, World!"); err != nil {
-						t.Errorf("failed to execute command: %v", err)
-						return
-					} else if expectedOutput := "Hello, World!\r\n"; string(output) != expectedOutput {
-						t.Errorf("unexpected output: got %q, want %q", string(output), expectedOutput)
-						return
-					}
-				})
+						if output, err := session.Output("echo Hello, World!"); err != nil {
+							t.Errorf("failed to execute command: %v", err)
+							return
+						} else if expectedOutput := "Hello, World!\r\n"; string(output) != expectedOutput {
+							t.Errorf("unexpected output: got %q, want %q", string(output), expectedOutput)
+							return
+						}
+					})
+				}
 			}
 		})
 	})

@@ -8,7 +8,9 @@ import (
 	"github.com/hectorm/cardea/pkg/authkeys"
 )
 
-func (srv *Server) newAuthorizedKeysDB(path string) (map[string][]*authkeys.AuthorizedKeyOptions, error) {
+type authKeysDB map[string][]*authkeys.AuthorizedKeyOptions
+
+func (srv *Server) newAuthorizedKeysDB(path string) (authKeysDB, error) {
 	path = filepath.Clean(path)
 
 	if f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600); err == nil {
