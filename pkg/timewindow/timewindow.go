@@ -48,7 +48,11 @@ type Window struct {
 }
 
 func (w *Window) Contains(t time.Time) bool {
-	t = t.In(w.Location)
+	loc := w.Location
+	if loc == nil {
+		loc = time.Local
+	}
+	t = t.In(loc)
 
 	if !matchRanges(w.DOW, int(t.Weekday())) {
 		return false
@@ -111,16 +115,16 @@ func (w Window) String() string {
 
 func (w Window) MarshalJSON() ([]byte, error) {
 	type windowAlias Window
-	loc := "Local"
-	if w.Location != nil {
-		loc = w.Location.String()
+	loc := w.Location
+	if loc == nil {
+		loc = time.Local
 	}
 	return json.Marshal(struct {
 		windowAlias
 		Location string `json:"location"`
 	}{
 		windowAlias: windowAlias(w),
-		Location:    loc,
+		Location:    loc.String(),
 	})
 }
 
