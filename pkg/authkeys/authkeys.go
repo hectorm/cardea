@@ -236,6 +236,8 @@ func ParseOptions(opts []string) (*AuthorizedKeyOptions, error) {
 			authKeyOpts.NoRecording = false
 		case "no-recording":
 			authKeyOpts.NoRecording = true
+		default:
+			return nil, fmt.Errorf("unknown option: %s", name)
 		}
 	}
 

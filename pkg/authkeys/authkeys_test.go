@@ -199,6 +199,17 @@ func TestAuthkeys(t *testing.T) {
 				t.Errorf("expected error containing %q, got %q", "malformed", err.Error())
 			}
 		})
+
+		t.Run("unknown_option", func(t *testing.T) {
+			_, err := ParseOptions([]string{`permitconnect="*@example.com:22"`, `unknown`})
+			if err == nil {
+				t.Error("expected error, got nil")
+				return
+			}
+			if !strings.Contains(err.Error(), "unknown option") {
+				t.Errorf("expected error containing %q, got %q", "unknown option", err.Error())
+			}
+		})
 	})
 
 	t.Run("split_option", func(t *testing.T) {
