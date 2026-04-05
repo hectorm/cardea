@@ -12,9 +12,7 @@ import (
 	"math"
 	"net"
 	"os"
-	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -851,11 +849,11 @@ func (srv *Server) isClientEnvAllowed(authKeyOpts *authkeys.AuthorizedKeyOptions
 	for _, env := range authKeyOpts.Environments {
 		switch env.Sign {
 		case "+":
-			if srv.matchNamePattern(env.Name, name) {
+			if authkeys.MatchNamePattern(env.Name, name) {
 				allowed = true
 			}
 		case "-":
-			if srv.matchNamePattern(env.Name, name) {
+			if authkeys.MatchNamePattern(env.Name, name) {
 				allowed = false
 			}
 		default:
@@ -886,8 +884,8 @@ func (srv *Server) handleDirectTCPIP(backendConn *ssh.Client, authKeyOpts *authk
 
 	allowed := false
 	for _, po := range authKeyOpts.PermitOpens {
-		matchHost := srv.matchHostPattern(po.Host, payload.HostToConnect)
-		matchPort := srv.matchPortPattern(po.Port, payload.PortToConnect)
+		matchHost := authkeys.MatchHostPattern(po.Host, payload.HostToConnect)
+		matchPort := authkeys.MatchPortPattern(po.Port, payload.PortToConnect)
 		if matchHost && matchPort {
 			allowed = true
 			break
@@ -938,8 +936,8 @@ func (srv *Server) handleTCPIPForward(backendConn *ssh.Client, authKeyOpts *auth
 
 	allowed := false
 	for _, pl := range authKeyOpts.PermitListens {
-		matchHost := srv.matchHostPattern(pl.Host, payload.BindAddr)
-		matchPort := srv.matchPortPattern(pl.Port, payload.BindPort)
+		matchHost := authkeys.MatchHostPattern(pl.Host, payload.BindAddr)
+		matchPort := authkeys.MatchPortPattern(pl.Port, payload.BindPort)
 		if matchHost && matchPort {
 			allowed = true
 			break
@@ -986,8 +984,8 @@ func (srv *Server) handleForwardedTCPIP(frontendConn *ssh.ServerConn, authKeyOpt
 
 	allowed := false
 	for _, pl := range authKeyOpts.PermitListens {
-		matchHost := srv.matchHostPattern(pl.Host, payload.ConnectedHost)
-		matchPort := srv.matchPortPattern(pl.Port, payload.ConnectedPort)
+		matchHost := authkeys.MatchHostPattern(pl.Host, payload.ConnectedHost)
+		matchPort := authkeys.MatchPortPattern(pl.Port, payload.ConnectedPort)
 		if matchHost && matchPort {
 			allowed = true
 			break
@@ -1037,7 +1035,7 @@ func (srv *Server) handleDirectStreamLocal(backendConn *ssh.Client, authKeyOpts 
 
 	allowed := false
 	for _, pso := range authKeyOpts.PermitSocketOpens {
-		if srv.matchPathPattern(pso.Path, payload.SocketPath) {
+		if authkeys.MatchPathPattern(pso.Path, payload.SocketPath) {
 			allowed = true
 			break
 		}
@@ -1086,7 +1084,7 @@ func (srv *Server) handleStreamLocalForward(backendConn *ssh.Client, authKeyOpts
 
 	allowed := false
 	for _, psl := range authKeyOpts.PermitSocketListens {
-		if srv.matchPathPattern(psl.Path, payload.SocketPath) {
+		if authkeys.MatchPathPattern(psl.Path, payload.SocketPath) {
 			allowed = true
 			break
 		}
@@ -1130,7 +1128,7 @@ func (srv *Server) handleForwardedStreamLocal(frontendConn *ssh.ServerConn, auth
 
 	allowed := false
 	for _, psl := range authKeyOpts.PermitSocketListens {
-		if srv.matchPathPattern(psl.Path, payload.SocketPath) {
+		if authkeys.MatchPathPattern(psl.Path, payload.SocketPath) {
 			allowed = true
 			break
 		}
@@ -1338,7 +1336,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 				if negated {
 					pattern = pattern[1:]
 				}
-				if srv.matchHostPattern(pattern, remoteHost) {
+				if authkeys.MatchHostPattern(pattern, remoteHost) {
 					if negated {
 						fromAllowed = false
 						break
@@ -1354,10 +1352,7 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 
 		backendAllowed := false
 		for _, pattern := range entry.PermitConnects {
-			matchUser := srv.matchUserPattern(pattern.User, backend.User)
-			matchHost := srv.matchHostPattern(pattern.Host, backend.Host)
-			matchPort := srv.matchPortPattern(pattern.Port, backend.Port)
-			if matchUser && matchHost && matchPort {
+			if authkeys.MatchPermitConnect(pattern, *backend) {
 				backendAllowed = true
 				break
 			}
@@ -1543,94 +1538,6 @@ func (srv *Server) bannerCallback(conn ssh.ConnMetadata) string {
 	defer srv.bannerMu.RUnlock()
 
 	return srv.banner
-}
-
-func (srv *Server) matchUserPattern(pattern, user string) bool {
-	if user == "" || len(user) > 255 {
-		return false
-	}
-
-	return srv.matchNamePattern(pattern, user)
-}
-
-func (srv *Server) matchHostPattern(pattern, host string) bool {
-	if len(host) > 255 {
-		return false
-	}
-
-	if srv.matchNamePattern(strings.ToLower(pattern), strings.ToLower(host)) {
-		return true
-	}
-
-	_, cidr, err := net.ParseCIDR(pattern)
-	if err != nil {
-		return false
-	}
-
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return false
-	}
-
-	return cidr.Contains(ip)
-}
-
-func (srv *Server) matchPortPattern(pattern string, port any) bool {
-	targetPort, err := strconv.ParseUint(fmt.Sprintf("%v", port), 10, 16)
-	if err != nil || targetPort > math.MaxUint16 {
-		return false
-	}
-
-	if pattern == "*" {
-		return true
-	}
-
-	if strings.Contains(pattern, "-") {
-		parts := strings.Split(pattern, "-")
-		if len(parts) == 2 {
-			startPort, startErr := strconv.ParseUint(parts[0], 10, 16)
-			endPort, endErr := strconv.ParseUint(parts[1], 10, 16)
-			if startErr == nil && endErr == nil && startPort <= endPort {
-				if targetPort >= startPort && targetPort <= endPort {
-					return true
-				}
-			}
-		}
-	} else {
-		patternPort, err := strconv.ParseUint(pattern, 10, 16)
-		if err == nil && targetPort == patternPort {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (srv *Server) matchNamePattern(pattern, value string) bool {
-	if strings.Contains(value, "/") || value == "." || value == ".." {
-		return false
-	}
-
-	match, err := path.Match(pattern, value)
-	return match && err == nil
-}
-
-func (srv *Server) matchPathPattern(pattern, value string) bool {
-	if value == "" {
-		return false
-	}
-
-	if pattern == "*" {
-		return true
-	}
-
-	pattern, value = path.Clean(pattern), path.Clean(value)
-	if path.IsAbs(pattern) != path.IsAbs(value) {
-		return false
-	}
-
-	match, err := path.Match(pattern, value)
-	return match && err == nil
 }
 
 func (srv *Server) marshalAuthorizedKey(key ssh.PublicKey) string {
