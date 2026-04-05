@@ -50,7 +50,17 @@ func TestAuthkeys(t *testing.T) {
 				t.Errorf("expected no warnings, got %d", len(warnings))
 			}
 			if len(db) != 2 {
-				t.Errorf("expected 2 keys, got %d", len(db))
+				t.Fatalf("expected 2 keys, got %d", len(db))
+			}
+			comments := map[string]struct{}{}
+			for _, opts := range db {
+				comments[opts[0].Comment] = struct{}{}
+			}
+			if _, ok := comments["alice"]; !ok {
+				t.Error("missing comment 'alice'")
+			}
+			if _, ok := comments["bob"]; !ok {
+				t.Error("missing comment 'bob'")
 			}
 		})
 

@@ -74,28 +74,34 @@ func ParseFile(content []byte) (map[string][]*AuthorizedKeyOptions, []Warning, e
 	var warnings []Warning
 
 	preprocess(string(content), func(line preprocessedLine) {
-		keyOpts, publicKey, err := ParseLine(line.segments[0])
+		baseOpts, publicKey, err := ParseLine(line.segments[0])
 		if err != nil {
 			warnings = append(warnings, Warning{Message: err.Error(), Line: line.line, Context: line.raw})
 			return
 		}
-		keys := []string{string(publicKey.Marshal())}
+		type keyEntry struct {
+			marshal string
+			comment string
+		}
+		keys := []keyEntry{{string(publicKey.Marshal()), baseOpts.Comment}}
 
 		for _, seg := range line.segments[1:] {
-			publicKey, _, opts, err := ParseKey(seg)
+			publicKey, comment, extraOpts, err := ParseKey(seg)
 			if err != nil {
 				warnings = append(warnings, Warning{Message: err.Error(), Line: line.line, Context: line.raw})
 				return
 			}
-			if len(opts) > 0 {
+			if len(extraOpts) > 0 {
 				warnings = append(warnings, Warning{Message: "unexpected options", Line: line.line, Context: line.raw})
 				return
 			}
-			keys = append(keys, string(publicKey.Marshal()))
+			keys = append(keys, keyEntry{string(publicKey.Marshal()), comment})
 		}
 
-		for _, key := range keys {
-			authKeysDB[key] = append(authKeysDB[key], keyOpts)
+		for _, k := range keys {
+			opts := *baseOpts
+			opts.Comment = k.comment
+			authKeysDB[k.marshal] = append(authKeysDB[k.marshal], &opts)
 		}
 	}, func(w Warning) {
 		warnings = append(warnings, w)
