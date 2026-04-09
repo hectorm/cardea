@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1682,8 +1683,8 @@ func (srv *Server) diskCleanupWorker() {
 					}
 					return nil
 				})
-				for i := len(dirs) - 1; i >= 0; i-- {
-					_ = os.Remove(dirs[i])
+				for _, v := range slices.Backward(dirs) {
+					_ = os.Remove(v)
 				}
 			}
 		case <-srv.ctx.Done():
