@@ -42,10 +42,10 @@ type Config struct {
 }
 
 var (
-	Version    = "dev"
 	Author     = "H\u00E9ctor Molinero Fern\u00E1ndez <hector@molinero.dev>"
 	License    = "EUPL-v1.2-or-later, https://interoperable-europe.ec.europa.eu/collection/eupl"
 	Repository = "https://github.com/hectorm/cardea"
+	Version    = "dev"
 )
 
 func NewConfig() *Config {
