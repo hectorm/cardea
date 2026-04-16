@@ -1712,7 +1712,7 @@ func (srv *Server) diskCleanup() (ok bool, deleted bool, err error) {
 		remaining := files[:0]
 		for _, file := range files {
 			if file.ModTime.Before(cutoffTime) {
-				if err := os.Remove(file.Path); err != nil {
+				if err := os.Remove(file.Path); err != nil && !os.IsNotExist(err) {
 					slog.Error("failed to remove recording", "file", file.Path, "error", err)
 					remaining = append(remaining, file)
 					continue
@@ -1739,7 +1739,7 @@ func (srv *Server) diskCleanup() (ok bool, deleted bool, err error) {
 				"threshold", fmt.Sprintf("%.1f%%", srv.recordingsMaxPercent))
 
 			for _, file := range files {
-				if err := os.Remove(file.Path); err != nil {
+				if err := os.Remove(file.Path); err != nil && !os.IsNotExist(err) {
 					slog.Error("failed to remove recording", "file", file.Path, "error", err)
 					continue
 				}
@@ -1776,7 +1776,7 @@ func (srv *Server) diskCleanup() (ok bool, deleted bool, err error) {
 				"threshold", bytesize.Format(srv.recordingsMaxBytes))
 
 			for _, file := range files {
-				if err := os.Remove(file.Path); err != nil {
+				if err := os.Remove(file.Path); err != nil && !os.IsNotExist(err) {
 					slog.Error("failed to remove recording", "file", file.Path, "error", err)
 					continue
 				}
