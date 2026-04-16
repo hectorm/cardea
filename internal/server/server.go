@@ -1583,7 +1583,6 @@ func (srv *Server) fileWatcher() {
 
 	waitFor := 100 * time.Millisecond
 	timers := make(map[string]*time.Timer)
-	mu := sync.Mutex{}
 
 	for {
 		select {
@@ -1601,9 +1600,7 @@ func (srv *Server) fileWatcher() {
 				continue
 			}
 
-			mu.Lock()
 			t, ok := timers[file]
-			mu.Unlock()
 
 			if !ok {
 				file := file
@@ -1643,9 +1640,7 @@ func (srv *Server) fileWatcher() {
 				})
 				t.Stop()
 
-				mu.Lock()
 				timers[file] = t
-				mu.Unlock()
 			}
 
 			t.Reset(waitFor)
