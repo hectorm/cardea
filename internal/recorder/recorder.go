@@ -85,7 +85,7 @@ func (r *AsciicastV3Recorder) WriteHeader(header *AsciicastV3Header) error {
 		return nil
 	}
 
-	file, err := os.OpenFile(filepath.Join(r.path), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	file, err := os.OpenFile(r.path, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
