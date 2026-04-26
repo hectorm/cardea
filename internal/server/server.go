@@ -596,12 +596,10 @@ func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.
 	}()
 
 	go func() {
-		if started, err := srv.handleRequests(backendSession, authKeyOpts, requests, asciicastRec, asciicastHeader); err != nil {
+		if err := srv.handleRequests(backendSession, authKeyOpts, requests, asciicastRec, asciicastHeader); err != nil {
 			slog.Error("failed to handle request", "error", err)
-			_ = backendSession.Close()
-		} else if !started {
-			_ = backendSession.Close()
 		}
+		_ = backendSession.Close()
 	}()
 
 	wg.Wait()
@@ -633,8 +631,7 @@ func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.
 func (srv *Server) handleRequests(
 	backendSession *ssh.Session, authKeyOpts *authkeys.AuthorizedKeyOptions, requests <-chan *ssh.Request,
 	asciicastRec *recorder.AsciicastV3Recorder, asciicastHeader *recorder.AsciicastV3Header,
-) (bool, error) {
-	started := false
+) error {
 	ptyRequested := false
 	for req := range requests {
 		ok := false
@@ -764,7 +761,7 @@ func (srv *Server) handleRequests(
 				slog.Error("session run error", "error", err)
 				break
 			}
-			ok, started = true, true
+			ok = true
 		case "shell":
 			command := authKeyOpts.Command
 			if asciicastRec != nil && asciicastHeader != nil {
@@ -791,7 +788,7 @@ func (srv *Server) handleRequests(
 					break
 				}
 			}
-			ok, started = true, true
+			ok = true
 		case "subsystem":
 			var payload struct {
 				Subsystem string
@@ -823,7 +820,7 @@ func (srv *Server) handleRequests(
 					slog.Error("failed to request sftp subsystem", "error", err)
 					break
 				}
-				ok, started = true, true
+				ok = true
 			default:
 				slog.Warn("unsupported subsystem", "subsystem", payload.Subsystem)
 			}
@@ -837,7 +834,7 @@ func (srv *Server) handleRequests(
 		}
 	}
 
-	return started, nil
+	return nil
 }
 
 func (srv *Server) isClientEnvAllowed(authKeyOpts *authkeys.AuthorizedKeyOptions, name string) bool {
