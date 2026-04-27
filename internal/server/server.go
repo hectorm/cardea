@@ -528,11 +528,12 @@ func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.
 				frontendConn.RemoteAddr(),
 			))
 			asciicastHeader.Cardea = &recorder.AsciicastV3Cardea{
-				BackendAddr:  backendConn.RemoteAddr().String(),
-				FrontendAddr: frontendConn.RemoteAddr().String(),
-				SessionID:    sessionID,
-				Fingerprint:  frontendConn.Permissions.Extensions[sshKeyFpExt],
-				Comment:      authKeyOpts.Comment,
+				BackendTarget: frontendConn.User(),
+				BackendAddr:   backendConn.RemoteAddr().String(),
+				FrontendAddr:  frontendConn.RemoteAddr().String(),
+				SessionID:     sessionID,
+				Fingerprint:   frontendConn.Permissions.Extensions[sshKeyFpExt],
+				Comment:       authKeyOpts.Comment,
 			}
 			defer func() { _ = asciicastRec.Close() }()
 		} else if err != nil {

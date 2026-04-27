@@ -1113,6 +1113,9 @@ func TestBastionSSHServer(t *testing.T) {
 				if err != nil {
 					return fmt.Errorf("failed to read recording: %w", err)
 				}
+				if !strings.Contains(string(content), fmt.Sprintf(`"backend_target":"alice@%s"`, mockAddr)) {
+					return fmt.Errorf("recording should contain requested backend in metadata: %q", string(content))
+				}
 				if !strings.Contains(string(content), `"command":"exit 42"`) {
 					return fmt.Errorf("recording should contain command in header: %q", string(content))
 				}

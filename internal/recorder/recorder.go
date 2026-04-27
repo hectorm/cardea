@@ -52,11 +52,12 @@ type AsciicastV3Term struct {
 }
 
 type AsciicastV3Cardea struct {
-	BackendAddr  string `json:"backend_addr"`
-	FrontendAddr string `json:"frontend_addr"`
-	SessionID    string `json:"session_id"`
-	Fingerprint  string `json:"fingerprint"`
-	Comment      string `json:"comment,omitempty"`
+	BackendTarget string `json:"backend_target"`
+	BackendAddr   string `json:"backend_addr"`
+	FrontendAddr  string `json:"frontend_addr"`
+	SessionID     string `json:"session_id"`
+	Fingerprint   string `json:"fingerprint"`
+	Comment       string `json:"comment,omitempty"`
 }
 
 type AsciicastV3Event [3]any
