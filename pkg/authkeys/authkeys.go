@@ -311,38 +311,47 @@ func QuoteOptionValue(s string) string {
 
 func ParsePermitConnect(s string) (*PermitConnect, error) {
 	if s != "" && len(s) <= MaxPermitConnectLength {
+		resolveHost := func(raw string) (string, bool) {
+			bracketed := strings.HasPrefix(raw, "[") && strings.HasSuffix(raw, "]")
+			host := raw
+			if bracketed {
+				host = raw[1 : len(raw)-1]
+			}
+			if host == "" {
+				return "", false
+			}
+			if ip := net.ParseIP(host); ip != nil {
+				return ip.String(), true
+			}
+			if bracketed || !strings.Contains(host, ":") {
+				return host, true
+			}
+			return "", false
+		}
+
 		// Try format <user>@<host>[:<port>]
 		if i := strings.LastIndex(s, "@"); i != -1 {
 			user, addr := s[:i], s[i+1:]
-			host, port, err := net.SplitHostPort(addr)
-			if err == nil && user != "" && host != "" && port != "" {
-				return &PermitConnect{User: user, Host: host, Port: port}, nil
-			} else if user != "" && addr != "" {
-				host := strings.TrimSuffix(strings.TrimPrefix(addr, "["), "]")
-				if ip := net.ParseIP(host); ip != nil {
-					return &PermitConnect{User: user, Host: ip.String(), Port: "22"}, nil
-				} else if host != "" && !strings.Contains(host, ":") {
+			if user != "" && addr != "" {
+				host, port, err := net.SplitHostPort(addr)
+				if err == nil && host != "" && port != "" {
+					return &PermitConnect{User: user, Host: host, Port: port}, nil
+				}
+				if host, ok := resolveHost(addr); ok {
 					return &PermitConnect{User: user, Host: host, Port: "22"}, nil
 				}
 			}
 		}
 
 		// Try format <user>+<host>[+<port>]
-		if parts := strings.Split(s, "+"); len(parts) == 3 {
-			user, host, port := parts[0], parts[1], parts[2]
-			host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
-			_, _, err := net.SplitHostPort(net.JoinHostPort(host, port))
-			if err == nil && user != "" && host != "" && port != "" {
-				return &PermitConnect{User: user, Host: host, Port: port}, nil
+		if parts := strings.Split(s, "+"); len(parts) == 2 || len(parts) == 3 {
+			user, rawHost, port := parts[0], parts[1], "22"
+			if len(parts) == 3 {
+				port = parts[2]
 			}
-		} else if len(parts) == 2 {
-			user, host := parts[0], parts[1]
-			host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
-			if user != "" && host != "" {
-				if ip := net.ParseIP(host); ip != nil {
-					return &PermitConnect{User: user, Host: ip.String(), Port: "22"}, nil
-				} else if host != "" && !strings.Contains(host, ":") {
-					return &PermitConnect{User: user, Host: host, Port: "22"}, nil
+			if user != "" && port != "" {
+				if host, ok := resolveHost(rawHost); ok {
+					return &PermitConnect{User: user, Host: host, Port: port}, nil
 				}
 			}
 		}

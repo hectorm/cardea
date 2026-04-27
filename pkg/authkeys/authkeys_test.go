@@ -305,16 +305,24 @@ func TestAuthkeys(t *testing.T) {
 				wantHost string
 				wantPort string
 			}{
-				{name: "at_with_port", input: "*@example.com:22", wantUser: "*", wantHost: "example.com", wantPort: "22"},
-				{name: "at_without_port", input: "root@example.com", wantUser: "root", wantHost: "example.com", wantPort: "22"},
-				{name: "at_ipv6_with_port", input: "root@[2001:db8::1]:22", wantUser: "root", wantHost: "2001:db8::1", wantPort: "22"},
-				{name: "at_ipv6_without_port", input: "root@[2001:db8::1]", wantUser: "root", wantHost: "2001:db8::1", wantPort: "22"},
+				{name: "at_hostname", input: "root@example.com", wantUser: "root", wantHost: "example.com", wantPort: "22"},
+				{name: "at_hostname_with_port", input: "root@example.com:2222", wantUser: "root", wantHost: "example.com", wantPort: "2222"},
 				{name: "at_ipv4", input: "root@192.168.1.1", wantUser: "root", wantHost: "192.168.1.1", wantPort: "22"},
-				{name: "plus_with_port", input: "root+example.com+2222", wantUser: "root", wantHost: "example.com", wantPort: "2222"},
-				{name: "plus_without_port", input: "root+example.com", wantUser: "root", wantHost: "example.com", wantPort: "22"},
+				{name: "at_ipv4_cidr", input: "root@192.168.0.0/16", wantUser: "root", wantHost: "192.168.0.0/16", wantPort: "22"},
+				{name: "at_ipv4_cidr_with_port", input: "root@192.168.0.0/16:2222", wantUser: "root", wantHost: "192.168.0.0/16", wantPort: "2222"},
+				{name: "at_ipv6", input: "root@[2001:db8::1]", wantUser: "root", wantHost: "2001:db8::1", wantPort: "22"},
+				{name: "at_ipv6_with_port", input: "root@[2001:db8::1]:2222", wantUser: "root", wantHost: "2001:db8::1", wantPort: "2222"},
+				{name: "at_ipv6_bare", input: "root@2001:db8::1", wantUser: "root", wantHost: "2001:db8::1", wantPort: "22"},
+				{name: "at_ipv6_normalized", input: "root@[2001:0db8::1]", wantUser: "root", wantHost: "2001:db8::1", wantPort: "22"},
+				{name: "at_ipv6_cidr", input: "root@[2001:db8::/64]", wantUser: "root", wantHost: "2001:db8::/64", wantPort: "22"},
+				{name: "plus_hostname", input: "root+example.com", wantUser: "root", wantHost: "example.com", wantPort: "22"},
+				{name: "plus_hostname_with_port", input: "root+example.com+2222", wantUser: "root", wantHost: "example.com", wantPort: "2222"},
 				{name: "plus_ipv4", input: "root+192.168.1.1", wantUser: "root", wantHost: "192.168.1.1", wantPort: "22"},
-				{name: "plus_ipv6", input: "root+[2001:db8::1]+22", wantUser: "root", wantHost: "2001:db8::1", wantPort: "22"},
-				{name: "cidr", input: "*@192.168.0.0/16:22", wantUser: "*", wantHost: "192.168.0.0/16", wantPort: "22"},
+				{name: "plus_ipv6", input: "root+[2001:db8::1]", wantUser: "root", wantHost: "2001:db8::1", wantPort: "22"},
+				{name: "plus_ipv6_with_port", input: "root+[2001:db8::1]+2222", wantUser: "root", wantHost: "2001:db8::1", wantPort: "2222"},
+				{name: "plus_ipv6_bare", input: "root+2001:db8::1", wantUser: "root", wantHost: "2001:db8::1", wantPort: "22"},
+				{name: "plus_ipv6_normalized", input: "root+[2001:0db8::1]", wantUser: "root", wantHost: "2001:db8::1", wantPort: "22"},
+				{name: "plus_ipv6_cidr", input: "root+[2001:db8::/64]", wantUser: "root", wantHost: "2001:db8::/64", wantPort: "22"},
 			}
 
 			for _, tt := range tests {
@@ -346,8 +354,11 @@ func TestAuthkeys(t *testing.T) {
 				{name: "too_long", input: "*@" + strings.Repeat("a", MaxPermitConnectLength) + ":22"},
 				{name: "at_empty_user", input: "@example.com:22"},
 				{name: "at_empty_host", input: "root@:22"},
+				{name: "at_empty_brackets", input: "root@[]"},
+				{name: "at_empty_brackets_with_port", input: "root@[]:22"},
 				{name: "plus_empty_user", input: "+example.com"},
 				{name: "plus_empty_host", input: "root+"},
+				{name: "plus_empty_brackets", input: "root+[]"},
 			}
 
 			for _, tt := range tests {
