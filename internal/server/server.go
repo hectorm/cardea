@@ -10,9 +10,11 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"math/rand/v2"
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -43,11 +45,14 @@ const (
 	sshConnTimeout = 10 * time.Second
 )
 
-var bufferPool = sync.Pool{
-	New: func() any {
-		return make([]byte, 32*1024)
-	},
-}
+var (
+	nodeIDRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,252}$`)
+	bufferPool  = sync.Pool{
+		New: func() any {
+			return make([]byte, 32*1024)
+		},
+	}
+)
 
 type Server struct {
 	config               *config.Config
@@ -89,6 +94,12 @@ func NewServer(cfg *config.Config, opts ...Option) (*Server, error) {
 			return nil, err
 		}
 	}
+
+	srv.config.NodeID = os.ExpandEnv(srv.config.NodeID)
+	if srv.config.NodeID != "" && !nodeIDRegex.MatchString(srv.config.NodeID) {
+		return nil, fmt.Errorf("invalid node-id %q: must start with [A-Za-z0-9], contain only [A-Za-z0-9._-], max 253 chars", srv.config.NodeID)
+	}
+	srv.metrics.NodeID = srv.config.NodeID
 
 	if srv.credentialProvider == nil {
 		switch srv.config.KeyStrategy {
@@ -235,6 +246,7 @@ func (srv *Server) Start() error {
 	}
 
 	slog.Info("SSH server listening",
+		"node_id", srv.config.NodeID,
 		"address", srv.Address(),
 		"fingerprint", ssh.FingerprintSHA256(srv.signer.PublicKey()),
 		"public_key", srv.marshalAuthorizedKey(srv.signer.PublicKey()),
@@ -513,35 +525,32 @@ func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.
 	var asciicastRec *recorder.AsciicastV3Recorder
 	var asciicastHeader *recorder.AsciicastV3Header
 	if srv.config.RecordingsDir != "" && !authKeyOpts.NoRecording {
-		if ok, _, err := srv.diskCleanup(); ok {
-			sessionID := hex.EncodeToString(frontendConn.SessionID()[:10])
-			now := time.Now()
-			dir := filepath.Join(srv.config.RecordingsDir, now.Format("2006"), now.Format("01"), now.Format("02"))
-			if err := os.MkdirAll(dir, 0700); err != nil {
-				return err
-			}
-			path := filepath.Join(dir, fmt.Sprintf("%s-%s.cast.gz", now.Format("150405"), sessionID))
-			asciicastRec = recorder.NewAsciicastV3Recorder(path)
-			asciicastHeader = recorder.NewAsciicastV3Header(fmt.Sprintf(
-				"Connection to %q from %q",
-				backendConn.RemoteAddr(),
-				frontendConn.RemoteAddr(),
-			))
-			asciicastHeader.Cardea = &recorder.AsciicastV3Cardea{
-				BackendTarget: frontendConn.User(),
-				BackendAddr:   backendConn.RemoteAddr().String(),
-				FrontendAddr:  frontendConn.RemoteAddr().String(),
-				SessionID:     sessionID,
-				Fingerprint:   frontendConn.Permissions.Extensions[sshKeyFpExt],
-				Comment:       authKeyOpts.Comment,
-			}
-			defer func() { _ = asciicastRec.Close() }()
-		} else if err != nil {
-			return err
-		} else {
-			slog.Warn("insufficient space for recording")
-			return nil
+		now := time.Now().UTC()
+		sessionID := hex.EncodeToString(frontendConn.SessionID()[:10])
+		nodeSuffix := ""
+		if srv.config.NodeID != "" {
+			nodeSuffix = "-" + srv.config.NodeID
 		}
+		path := filepath.Join(
+			filepath.Join(srv.config.RecordingsDir, now.Format("2006"), now.Format("01"), now.Format("02")),
+			fmt.Sprintf("%s-%s%s.cast.gz", now.Format("150405"), sessionID, nodeSuffix),
+		)
+		asciicastRec = recorder.NewAsciicastV3Recorder(path)
+		asciicastHeader = recorder.NewAsciicastV3Header(fmt.Sprintf(
+			"Connection to %q from %q",
+			backendConn.RemoteAddr(),
+			frontendConn.RemoteAddr(),
+		))
+		asciicastHeader.Cardea = &recorder.AsciicastV3Cardea{
+			NodeID:        srv.config.NodeID,
+			BackendTarget: frontendConn.User(),
+			BackendAddr:   backendConn.RemoteAddr().String(),
+			FrontendAddr:  frontendConn.RemoteAddr().String(),
+			SessionID:     sessionID,
+			Fingerprint:   frontendConn.Permissions.Extensions[sshKeyFpExt],
+			Comment:       authKeyOpts.Comment,
+		}
+		defer func() { _ = asciicastRec.Close() }()
 	}
 
 	for _, env := range authKeyOpts.Environments {
@@ -1654,32 +1663,16 @@ func (srv *Server) fileWatcher() {
 }
 
 func (srv *Server) diskCleanupWorker() {
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
+	timer := time.NewTimer(time.Hour + rand.N(time.Hour)) // #nosec G404
+	defer timer.Stop()
 
 	for {
 		select {
-		case <-ticker.C:
-			_, deleted, err := srv.diskCleanup()
-			if err != nil {
+		case <-timer.C:
+			if _, _, err := srv.diskCleanup(); err != nil {
 				slog.Error("disk cleanup failed", "error", err)
 			}
-			if deleted {
-				base := filepath.Clean(srv.config.RecordingsDir)
-				var dirs []string
-				_ = filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-					if err != nil {
-						return err
-					}
-					if d.IsDir() && path != base {
-						dirs = append(dirs, path)
-					}
-					return nil
-				})
-				for _, v := range slices.Backward(dirs) {
-					_ = os.Remove(v)
-				}
-			}
+			timer.Reset(time.Hour + rand.N(time.Hour)) // #nosec G404
 		case <-srv.ctx.Done():
 			return
 		}
@@ -1687,11 +1680,8 @@ func (srv *Server) diskCleanupWorker() {
 }
 
 func (srv *Server) diskCleanup() (ok bool, deleted bool, err error) {
-	if srv.config.RecordingsDir == "" {
-		return true, false, nil
-	}
-
-	if srv.config.RecordingsRetentionTime <= 0 && srv.recordingsMaxPercent <= 0 && srv.recordingsMaxBytes <= 0 {
+	if srv.config.RecordingsDir == "" ||
+		(srv.config.RecordingsRetentionTime <= 0 && srv.recordingsMaxPercent <= 0 && srv.recordingsMaxBytes <= 0) {
 		return true, false, nil
 	}
 
@@ -1699,24 +1689,71 @@ func (srv *Server) diskCleanup() (ok bool, deleted bool, err error) {
 		return false, false, err
 	}
 
-	files, err := disk.GetFilesBySuffix(srv.config.RecordingsDir, ".cast.gz")
+	type recording struct {
+		path    string
+		size    int64
+		modTime time.Time
+	}
+	var files []recording
+	var dirs []string
+
+	err = filepath.WalkDir(srv.config.RecordingsDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			dirs = append(dirs, path)
+			return nil
+		}
+		name := strings.TrimSuffix(filepath.Base(path), ".tmp")
+		if !strings.HasSuffix(name, ".cast.gz") {
+			return nil
+		}
+		if srv.config.NodeID != "" {
+			name = strings.TrimSuffix(name, ".cast.gz")
+			parts := strings.SplitN(name, "-", 3)
+			if len(parts) != 3 || parts[2] != srv.config.NodeID {
+				return nil
+			}
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		files = append(files, recording{path: path, size: info.Size(), modTime: info.ModTime()})
+		return nil
+	})
 	if err != nil {
 		return false, false, err
 	}
+
+	// Prune empty directories
+	defer func() {
+		if !deleted {
+			return
+		}
+		for _, v := range slices.Backward(dirs[1:]) {
+			_ = os.Remove(v)
+		}
+	}()
+
+	slices.SortFunc(files, func(a, b recording) int {
+		return a.modTime.Compare(b.modTime)
+	})
 
 	// Remove files older than the configured retention time
 	if srv.config.RecordingsRetentionTime > 0 {
 		cutoffTime := time.Now().Add(-srv.config.RecordingsRetentionTime)
 		remaining := files[:0]
 		for _, file := range files {
-			if file.ModTime.Before(cutoffTime) {
-				if err := os.Remove(file.Path); err != nil && !os.IsNotExist(err) {
-					slog.Error("failed to remove recording", "file", file.Path, "error", err)
+			if file.modTime.Before(cutoffTime) {
+				if err := os.Remove(file.path); err != nil && !os.IsNotExist(err) {
+					slog.Error("failed to remove recording", "file", file.path, "error", err)
 					remaining = append(remaining, file)
 					continue
 				}
 				deleted = true
-				slog.Debug("removed recording", "file", filepath.Base(file.Path), "age", time.Since(file.ModTime))
+				slog.Debug("removed recording", "file", filepath.Base(file.path), "age", time.Since(file.modTime))
 			} else {
 				remaining = append(remaining, file)
 			}
@@ -1730,25 +1767,21 @@ func (srv *Server) diskCleanup() (ok bool, deleted bool, err error) {
 		if err != nil {
 			return false, deleted, err
 		}
-
 		if usage > srv.recordingsMaxPercent {
 			slog.Warn("disk usage above threshold, cleaning up oldest recordings",
 				"usage", fmt.Sprintf("%.1f%%", usage),
 				"threshold", fmt.Sprintf("%.1f%%", srv.recordingsMaxPercent))
-
 			for _, file := range files {
-				if err := os.Remove(file.Path); err != nil && !os.IsNotExist(err) {
-					slog.Error("failed to remove recording", "file", file.Path, "error", err)
+				if err := os.Remove(file.path); err != nil && !os.IsNotExist(err) {
+					slog.Error("failed to remove recording", "file", file.path, "error", err)
 					continue
 				}
 				deleted = true
-				slog.Debug("removed recording", "file", filepath.Base(file.Path))
-
+				slog.Debug("removed recording", "file", filepath.Base(file.path))
 				usage, err = disk.GetDiskUsage(srv.config.RecordingsDir)
 				if err != nil {
 					return false, deleted, err
 				}
-
 				if usage <= srv.recordingsMaxPercent {
 					slog.Info("disk usage back below threshold",
 						"usage", fmt.Sprintf("%.1f%%", usage),
@@ -1756,7 +1789,6 @@ func (srv *Server) diskCleanup() (ok bool, deleted bool, err error) {
 					return true, deleted, nil
 				}
 			}
-
 			return false, deleted, nil
 		}
 	}
@@ -1765,30 +1797,26 @@ func (srv *Server) diskCleanup() (ok bool, deleted bool, err error) {
 	if srv.recordingsMaxBytes > 0 {
 		var total int64
 		for _, file := range files {
-			total += file.Size
+			total += file.size
 		}
-
 		if total > srv.recordingsMaxBytes {
 			slog.Warn("recordings size above threshold, cleaning up oldest recordings",
 				"size", bytesize.Format(total),
 				"threshold", bytesize.Format(srv.recordingsMaxBytes))
-
 			for _, file := range files {
-				if err := os.Remove(file.Path); err != nil && !os.IsNotExist(err) {
-					slog.Error("failed to remove recording", "file", file.Path, "error", err)
+				if err := os.Remove(file.path); err != nil && !os.IsNotExist(err) {
+					slog.Error("failed to remove recording", "file", file.path, "error", err)
 					continue
 				}
 				deleted = true
-				slog.Debug("removed recording", "file", filepath.Base(file.Path))
-
-				if total -= file.Size; total <= srv.recordingsMaxBytes {
+				slog.Debug("removed recording", "file", filepath.Base(file.path))
+				if total -= file.size; total <= srv.recordingsMaxBytes {
 					slog.Info("recordings size back below threshold",
 						"size", bytesize.Format(total),
 						"threshold", bytesize.Format(srv.recordingsMaxBytes))
 					return true, deleted, nil
 				}
 			}
-
 			return false, deleted, nil
 		}
 	}

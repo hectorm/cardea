@@ -14,6 +14,7 @@ import (
 var startTime = time.Now()
 
 type Metrics struct {
+	NodeID                              string
 	ConnectionsActive                   atomic.Int64
 	ConnectionsTotal                    atomic.Uint64
 	SessionsActive                      atomic.Int64
@@ -173,6 +174,10 @@ func (m *Metrics) writeCardeaMetrics(ew *errWriter) {
 	ew.printf("# TYPE cardea_build_info gauge\n")
 	ew.printf("# HELP cardea_build_info Build information.\n")
 	ew.printf("cardea_build_info{version=%q} 1\n", config.Version)
+
+	ew.printf("# TYPE cardea_node_info gauge\n")
+	ew.printf("# HELP cardea_node_info Node information.\n")
+	ew.printf("cardea_node_info{node_id=%q} 1\n", m.NodeID)
 
 	ew.printf("# TYPE cardea_start_time_seconds gauge\n")
 	ew.printf("# HELP cardea_start_time_seconds Start time of Cardea since unix epoch in seconds.\n")

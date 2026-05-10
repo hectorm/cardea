@@ -28,7 +28,6 @@ import (
 	"github.com/hectorm/cardea/internal/config"
 	"github.com/hectorm/cardea/internal/health"
 	"github.com/hectorm/cardea/internal/server/mock"
-	"github.com/hectorm/cardea/internal/utils/disk"
 	"github.com/hectorm/cardea/pkg/timewindow"
 )
 
@@ -343,6 +342,19 @@ func TestBastionSSHServer(t *testing.T) {
 	}
 	mockAddr := mockSrv.Address()
 	mockAuthorizedKeyStr := marshalAuthorizedKey(mockSrv.Signer().PublicKey())
+
+	t.Run("invalid_node_id", func(t *testing.T) {
+		for _, nodeID := range []string{".", "..", ".hidden", "../parent", "-flag", "_underscore", strings.Repeat("a", 254)} {
+			t.Run(nodeID, func(t *testing.T) {
+				if _, err := setupBastionServer(t, "", "", func(srv *Server) error {
+					srv.config.NodeID = nodeID
+					return nil
+				}); err == nil {
+					t.Error("expected invalid node id to fail")
+				}
+			})
+		}
+	})
 
 	t.Run("permitconnect", func(t *testing.T) {
 		cli, cliPublicKey, err := setupClient(t)
@@ -1068,6 +1080,7 @@ func TestBastionSSHServer(t *testing.T) {
 				fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
 				func(srv *Server) error {
 					srv.config.RecordingsDir = recordingsDir
+					srv.config.NodeID = "node-a_1.2"
 					return nil
 				},
 			)
@@ -1101,17 +1114,27 @@ func TestBastionSSHServer(t *testing.T) {
 			}
 
 			if err := waitFor(2*time.Second, func() error {
-				files, err := filepath.Glob(filepath.Join(recordingsDir, "[0-9][0-9][0-9][0-9]", "[0-9][0-9]", "[0-9][0-9]", "*.cast.gz"))
+				files, err := filepath.Glob(filepath.Join(recordingsDir, "[0-9][0-9][0-9][0-9]", "[0-9][0-9]", "[0-9][0-9]", "*-node-a_1.2.cast.gz"))
 				if err != nil {
 					return fmt.Errorf("failed to glob for recordings: %w", err)
 				}
 				if len(files) != 1 {
 					return fmt.Errorf("expected 1 recording, got %d", len(files))
 				}
+				tmpFiles, err := filepath.Glob(filepath.Join(recordingsDir, "[0-9][0-9][0-9][0-9]", "[0-9][0-9]", "[0-9][0-9]", "*.cast.gz.tmp"))
+				if err != nil {
+					return fmt.Errorf("failed to glob for temporary recordings: %w", err)
+				}
+				if len(tmpFiles) != 0 {
+					return fmt.Errorf("expected no temporary recordings, got %d", len(tmpFiles))
+				}
 
 				content, err := readGzipFile(files[0])
 				if err != nil {
 					return fmt.Errorf("failed to read recording: %w", err)
+				}
+				if !strings.Contains(string(content), `"node_id":"node-a_1.2"`) {
+					return fmt.Errorf("recording should contain node id in metadata: %q", string(content))
 				}
 				if !strings.Contains(string(content), fmt.Sprintf(`"backend_target":"alice@%s"`, mockAddr)) {
 					return fmt.Errorf("recording should contain requested backend in metadata: %q", string(content))
@@ -1360,176 +1383,236 @@ func TestBastionSSHServer(t *testing.T) {
 				})
 			}
 		})
-	})
 
-	t.Run("recordings_rotation_percentage", func(t *testing.T) {
-		cli, cliPublicKey, err := setupClient(t)
-		if err != nil {
-			t.Errorf("failed to setup client: %v", err)
-			return
-		}
-		cli.User = fmt.Sprintf("alice@%s", mockAddr)
-		cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
+		t.Run("rotation", func(t *testing.T) {
+			t.Run("node_id", func(t *testing.T) {
+				recordingsDir := t.TempDir()
+				bastionSrv, err := setupBastionServer(t, "", "", func(srv *Server) error {
+					srv.config.RecordingsDir = recordingsDir
+					srv.config.NodeID = "node-a"
+					srv.config.RecordingsRetentionTime = time.Hour
+					srv.config.RecordingsMaxDiskUsage = "0"
+					return nil
+				})
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
 
-		recordingsDir := t.TempDir()
-		bastionSrv, err := setupBastionServer(t,
-			fmt.Sprintf(`permitconnect="alice@%s" %s`, mockAddr, cliAuthorizedKeyStr),
-			fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
-			func(srv *Server) error {
-				srv.config.RecordingsDir = recordingsDir
-				// Set a low retention time to ensure files are considered old
-				srv.config.RecordingsRetentionTime = 3 * time.Hour
-				// Set a low disk space threshold to simulate no free space
-				srv.config.RecordingsMaxDiskUsage = "0.0001%"
-				return nil
-			},
-		)
-		if err != nil {
-			t.Errorf("failed to setup bastion server: %v", err)
-			return
-		}
+				retainedDay := time.Now()
+				retainedDayPath := filepath.Join(retainedDay.Format("2006"), retainedDay.Format("01"), retainedDay.Format("02"))
+				expiredDay := retainedDay.AddDate(0, 0, -3)
+				expiredDayPath := filepath.Join(expiredDay.Format("2006"), expiredDay.Format("01"), expiredDay.Format("02"))
+				files := []struct {
+					name       string
+					modTime    time.Time
+					shouldStay bool
+				}{
+					{filepath.Join(expiredDayPath, "000000-aaaaaaaaaaaaaaaaaaaa-node-a.cast.gz"), expiredDay, false},
+					{filepath.Join(expiredDayPath, "000001-bbbbbbbbbbbbbbbbbbbb-node-a.cast.gz.tmp"), expiredDay, false},
+					{filepath.Join(expiredDayPath, "000002-cccccccccccccccccccc-node-b.cast.gz"), expiredDay, true},
+					{filepath.Join(expiredDayPath, "000003-dddddddddddddddddddd-node-b.cast.gz.tmp"), expiredDay, true},
+					{filepath.Join(expiredDayPath, "000006-gggggggggggggggggggg-b-node-a.cast.gz"), expiredDay, true},
+					{filepath.Join(expiredDayPath, "000007-hhhhhhhhhhhhhhhhhhhh-b-node-a.cast.gz.tmp"), expiredDay, true},
+					{filepath.Join(retainedDayPath, "000004-eeeeeeeeeeeeeeeeeeee-node-a.cast.gz"), retainedDay, true},
+					{filepath.Join(retainedDayPath, "000005-ffffffffffffffffffff-node-a.cast.gz.tmp"), retainedDay, true},
+				}
+				for _, file := range files {
+					path := filepath.Join(recordingsDir, file.name)
+					if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+						t.Errorf("failed to create recording dir: %v", err)
+						return
+					}
+					if err := os.WriteFile(path, []byte("recording"), 0600); err != nil {
+						t.Errorf("failed to create test file %s: %v", file.name, err)
+						return
+					}
+					if err := os.Chtimes(path, file.modTime, file.modTime); err != nil {
+						t.Errorf("failed to set file time for %s: %v", file.name, err)
+						return
+					}
+				}
 
-		files := []struct {
-			name string
-			age  time.Duration
-		}{
-			{"file1.cast.gz", 1 * time.Hour},
-			{"file2.cast.gz", 2 * time.Hour},
-			{"file3.cast.gz", 3 * time.Hour},
-			{"file4.cast.gz", 4 * time.Hour},
-			{"file5.cast.gz", 5 * time.Hour},
-		}
+				if ok, _, err := bastionSrv.diskCleanup(); err != nil {
+					t.Errorf("failed to clean recordings: %v", err)
+					return
+				} else if !ok {
+					t.Error("expected cleanup to succeed")
+					return
+				}
 
-		for _, file := range files {
-			path := filepath.Join(recordingsDir, file.name)
-			if err := os.WriteFile(path, make([]byte, 1024), 0600); err != nil {
-				t.Errorf("failed to create test file %s: %v", file.name, err)
-				return
-			}
+				for _, file := range files {
+					path := filepath.Join(recordingsDir, file.name)
+					if _, err := os.Stat(path); file.shouldStay && err != nil {
+						t.Errorf("expected %s to remain: %v", file.name, err)
+					} else if !file.shouldStay && !os.IsNotExist(err) {
+						t.Errorf("expected %s to be removed", file.name)
+					}
+				}
+			})
 
-			modTime := time.Now().Add(-file.age)
-			if err := os.Chtimes(path, modTime, modTime); err != nil {
-				t.Errorf("failed to set file time for %s: %v", file.name, err)
-				return
-			}
-		}
+			t.Run("percentage", func(t *testing.T) {
+				recordingsDir := t.TempDir()
+				bastionSrv, err := setupBastionServer(t, "", "", func(srv *Server) error {
+					srv.config.RecordingsDir = recordingsDir
+					srv.config.RecordingsRetentionTime = 0
+					srv.config.RecordingsMaxDiskUsage = "0.0001%"
+					return nil
+				})
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
 
-		if currentFiles, err := disk.GetFilesBySuffix(recordingsDir, ".cast.gz"); err != nil {
-			t.Errorf("failed to get current files: %v", err)
-			return
-		} else if len(currentFiles) != 5 {
-			t.Errorf("expected 5 current files, got %d", len(currentFiles))
-			return
-		}
+				files := []struct {
+					name string
+					age  time.Duration
+				}{
+					{"file1.cast.gz", 1 * time.Hour},
+					{"file2.cast.gz", 2 * time.Hour},
+					{"file3.cast.gz", 4 * time.Hour},
+					{"file4.cast.gz", 5 * time.Hour},
+					{"file5.cast.gz", 6 * time.Hour},
+					{"file6.cast.gz.tmp", 7 * time.Hour},
+				}
 
-		bastionConn, err := connectToServer(t, cli, bastionSrv)
-		if err != nil {
-			t.Errorf("failed to connect to server: %v", err)
-			return
-		}
+				for _, file := range files {
+					path := filepath.Join(recordingsDir, file.name)
+					if err := os.WriteFile(path, make([]byte, 1024), 0600); err != nil {
+						t.Errorf("failed to create test file %s: %v", file.name, err)
+						return
+					}
+					modTime := time.Now().Add(-file.age)
+					if err := os.Chtimes(path, modTime, modTime); err != nil {
+						t.Errorf("failed to set file time for %s: %v", file.name, err)
+						return
+					}
+				}
 
-		session, err := bastionConn.NewSession()
-		if err != nil {
-			t.Errorf("failed to create session: %v", err)
-			return
-		}
-		defer func() { _ = session.Close() }()
+				if currentFiles, err := filepath.Glob(filepath.Join(recordingsDir, "*.cast.gz")); err != nil {
+					t.Errorf("failed to get current files: %v", err)
+					return
+				} else if len(currentFiles) != 5 {
+					t.Errorf("expected 5 current files, got %d", len(currentFiles))
+					return
+				}
 
-		// Attempt to connect should trigger disk space check and cleanup operation
-		_, _ = session.Output("exit 0")
+				if ok, deleted, err := bastionSrv.diskCleanup(); err != nil {
+					t.Errorf("failed to clean recordings: %v", err)
+					return
+				} else if ok {
+					t.Error("expected cleanup to report insufficient space")
+					return
+				} else if !deleted {
+					t.Error("expected cleanup to delete recordings")
+					return
+				}
 
-		if remainingFiles, err := disk.GetFilesBySuffix(recordingsDir, ".cast.gz"); err != nil {
-			t.Errorf("failed to get remaining files: %v", err)
-			return
-		} else if len(remainingFiles) > 0 {
-			t.Errorf("expected 0 remaining files, got %d", len(remainingFiles))
-			return
-		}
-	})
+				if remainingFiles, err := filepath.Glob(filepath.Join(recordingsDir, "*.cast.gz")); err != nil {
+					t.Errorf("failed to get remaining files: %v", err)
+					return
+				} else if len(remainingFiles) > 0 {
+					t.Errorf("expected 0 remaining files, got %d", len(remainingFiles))
+					return
+				}
+				if _, err := os.Stat(filepath.Join(recordingsDir, "file1.cast.gz")); !os.IsNotExist(err) {
+					t.Error("expected recent recording to be removed")
+					return
+				}
+				if _, err := os.Stat(filepath.Join(recordingsDir, "file5.cast.gz")); !os.IsNotExist(err) {
+					t.Error("expected old recording to be removed")
+					return
+				}
+				if remainingFiles, err := filepath.Glob(filepath.Join(recordingsDir, "*.cast.gz.tmp")); err != nil {
+					t.Errorf("failed to get remaining temporary files: %v", err)
+					return
+				} else if len(remainingFiles) != 0 {
+					t.Errorf("expected 0 remaining temporary files, got %d", len(remainingFiles))
+					return
+				}
+			})
 
-	t.Run("recordings_rotation_fixed_size", func(t *testing.T) {
-		cli, cliPublicKey, err := setupClient(t)
-		if err != nil {
-			t.Errorf("failed to setup client: %v", err)
-			return
-		}
-		cli.User = fmt.Sprintf("alice@%s", mockAddr)
-		cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
+			t.Run("fixed_size", func(t *testing.T) {
+				recordingsDir := t.TempDir()
+				bastionSrv, err := setupBastionServer(t, "", "", func(srv *Server) error {
+					srv.config.RecordingsDir = recordingsDir
+					srv.config.RecordingsRetentionTime = 0
+					srv.config.RecordingsMaxDiskUsage = "4KB"
+					return nil
+				})
+				if err != nil {
+					t.Errorf("failed to setup bastion server: %v", err)
+					return
+				}
 
-		recordingsDir := t.TempDir()
-		bastionSrv, err := setupBastionServer(t,
-			fmt.Sprintf(`permitconnect="alice@%s" %s`, mockAddr, cliAuthorizedKeyStr),
-			fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
-			func(srv *Server) error {
-				srv.config.RecordingsDir = recordingsDir
-				// Set a low retention time to ensure files are considered old
-				srv.config.RecordingsRetentionTime = 3 * time.Hour
-				// Set a low disk space threshold to simulate no free space
-				srv.config.RecordingsMaxDiskUsage = "4KB"
-				return nil
-			},
-		)
-		if err != nil {
-			t.Errorf("failed to setup bastion server: %v", err)
-			return
-		}
+				files := []struct {
+					name string
+					age  time.Duration
+				}{
+					{"file1.cast.gz", 1 * time.Hour},
+					{"file2.cast.gz", 2 * time.Hour},
+					{"file3.cast.gz", 4 * time.Hour},
+					{"file4.cast.gz", 5 * time.Hour},
+					{"file5.cast.gz", 6 * time.Hour},
+					{"file6.cast.gz.tmp", 7 * time.Hour},
+				}
 
-		files := []struct {
-			name string
-			age  time.Duration
-		}{
-			{"file1.cast.gz", 1 * time.Hour},
-			{"file2.cast.gz", 2 * time.Hour},
-			{"file3.cast.gz", 3 * time.Hour},
-			{"file4.cast.gz", 4 * time.Hour},
-			{"file5.cast.gz", 5 * time.Hour},
-		}
+				for _, file := range files {
+					path := filepath.Join(recordingsDir, file.name)
+					if err := os.WriteFile(path, make([]byte, 1024), 0600); err != nil {
+						t.Errorf("failed to create test file %s: %v", file.name, err)
+						return
+					}
+					modTime := time.Now().Add(-file.age)
+					if err := os.Chtimes(path, modTime, modTime); err != nil {
+						t.Errorf("failed to set file time for %s: %v", file.name, err)
+						return
+					}
+				}
 
-		for _, file := range files {
-			path := filepath.Join(recordingsDir, file.name)
-			if err := os.WriteFile(path, make([]byte, 1024), 0600); err != nil {
-				t.Errorf("failed to create test file %s: %v", file.name, err)
-				return
-			}
+				if currentFiles, err := filepath.Glob(filepath.Join(recordingsDir, "*.cast.gz")); err != nil {
+					t.Errorf("failed to get current files: %v", err)
+					return
+				} else if len(currentFiles) != 5 {
+					t.Errorf("expected 5 current files, got %d", len(currentFiles))
+					return
+				}
 
-			modTime := time.Now().Add(-file.age)
-			if err := os.Chtimes(path, modTime, modTime); err != nil {
-				t.Errorf("failed to set file time for %s: %v", file.name, err)
-				return
-			}
-		}
+				if ok, deleted, err := bastionSrv.diskCleanup(); err != nil {
+					t.Errorf("failed to clean recordings: %v", err)
+					return
+				} else if !ok {
+					t.Error("expected cleanup to succeed")
+					return
+				} else if !deleted {
+					t.Error("expected cleanup to delete recordings")
+					return
+				}
 
-		if currentFiles, err := disk.GetFilesBySuffix(recordingsDir, ".cast.gz"); err != nil {
-			t.Errorf("failed to get current files: %v", err)
-			return
-		} else if len(currentFiles) != 5 {
-			t.Errorf("expected 5 current files, got %d", len(currentFiles))
-			return
-		}
-
-		bastionConn, err := connectToServer(t, cli, bastionSrv)
-		if err != nil {
-			t.Errorf("failed to connect to server: %v", err)
-			return
-		}
-
-		session, err := bastionConn.NewSession()
-		if err != nil {
-			t.Errorf("failed to create session: %v", err)
-			return
-		}
-		defer func() { _ = session.Close() }()
-
-		// Attempt to connect should trigger disk space check and cleanup operation
-		_, _ = session.Output("exit 0")
-
-		if remainingFiles, err := disk.GetFilesBySuffix(recordingsDir, ".cast.gz"); err != nil {
-			t.Errorf("failed to get remaining files: %v", err)
-			return
-		} else if len(remainingFiles) != 3 {
-			t.Errorf("expected 3 remaining files, got %d", len(remainingFiles))
-			return
-		}
+				if remainingFiles, err := filepath.Glob(filepath.Join(recordingsDir, "*.cast.gz")); err != nil {
+					t.Errorf("failed to get remaining files: %v", err)
+					return
+				} else if len(remainingFiles) != 4 {
+					t.Errorf("expected 4 remaining files, got %d", len(remainingFiles))
+					return
+				}
+				if _, err := os.Stat(filepath.Join(recordingsDir, "file1.cast.gz")); err != nil {
+					t.Errorf("expected recent recording to remain: %v", err)
+					return
+				}
+				if _, err := os.Stat(filepath.Join(recordingsDir, "file5.cast.gz")); !os.IsNotExist(err) {
+					t.Error("expected old recording to be removed")
+					return
+				}
+				if remainingFiles, err := filepath.Glob(filepath.Join(recordingsDir, "*.cast.gz.tmp")); err != nil {
+					t.Errorf("failed to get remaining temporary files: %v", err)
+					return
+				} else if len(remainingFiles) != 0 {
+					t.Errorf("expected 0 remaining temporary files, got %d", len(remainingFiles))
+					return
+				}
+			})
+		})
 	})
 
 	t.Run("connections_max", func(t *testing.T) {
@@ -4566,6 +4649,7 @@ func TestBastionSSHServer(t *testing.T) {
 					"go_gc_stack_starting_size_bytes",
 					"go_sync_mutex_wait_total_seconds_total",
 					"cardea_build_info",
+					"cardea_node_info",
 					"cardea_start_time_seconds",
 					"cardea_connections_active",
 					"cardea_connections_total",

@@ -17,6 +17,7 @@ import (
 type Config struct {
 	Listen                   string
 	HealthListen             string
+	NodeID                   string
 	KeyStrategy              string
 	PrivateKeyFile           string
 	PrivateKeyPassphrase     string
@@ -64,6 +65,13 @@ func NewConfig() *Config {
 		"health-listen",
 		env.StringEnv("localhost:9222", "CARDEA_HEALTH_LISTEN"),
 		"address for the health/metrics server; disabled if empty (env CARDEA_HEALTH_LISTEN)",
+	)
+
+	flag.StringVar(
+		&config.NodeID,
+		"node-id",
+		env.StringEnv("", "CARDEA_NODE_ID"),
+		"stable identifier for the instance; expands ${VAR} from the environment (env CARDEA_NODE_ID)",
 	)
 
 	flag.StringVar(
@@ -214,7 +222,7 @@ func NewConfig() *Config {
 	flag.StringVar(
 		&config.RecordingsMaxDiskUsage,
 		"recordings-max-disk-usage",
-		env.StringEnv("90%", "CARDEA_RECORDINGS_MAX_DISK_USAGE"),
+		env.StringEnv("0", "CARDEA_RECORDINGS_MAX_DISK_USAGE"),
 		"maximum disk usage for session recordings; accepts percentage (e.g. 90%) or fixed size (e.g. 1GB) (env CARDEA_RECORDINGS_MAX_DISK_USAGE)",
 	)
 

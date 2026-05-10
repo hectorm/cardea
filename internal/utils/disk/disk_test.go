@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
-	"time"
 )
 
 func TestDisk(t *testing.T) {
@@ -17,85 +16,6 @@ func TestDisk(t *testing.T) {
 			return
 		} else if usage < 0 || usage > 100 {
 			t.Errorf("expected disk usage between 0-100%%, got %f%%", usage)
-			return
-		}
-	})
-
-	t.Run("get_files_by_suffix", func(t *testing.T) {
-		tempDir := t.TempDir()
-
-		filenames := []string{
-			"20060102-150405-43ceb62ea6ea67455d73.cast.gz",
-			"20060102-160506-fc89b5fe3ba17763fb1c.cast.gz",
-			"20060102-170607-BFABF579D09DB9B069E1.CAST.GZ",
-			"other.cast",
-			"regular.txt",
-		}
-
-		for i, filename := range filenames {
-			path := filepath.Join(tempDir, filename)
-			if err := os.WriteFile(path, []byte("test content"), 0600); err != nil {
-				t.Errorf("failed to create file: %v", err)
-				return
-			}
-
-			modTime := time.Now().Add(time.Duration(i) * time.Hour)
-			if err := os.Chtimes(path, modTime, modTime); err != nil {
-				t.Errorf("failed to set file time: %v", err)
-				return
-			}
-		}
-
-		files, err := GetFilesBySuffix(tempDir, ".cast.gz")
-		if err != nil {
-			t.Errorf("failed to get files: %v", err)
-			return
-		}
-
-		if len(files) != 3 {
-			t.Errorf("expected 3 files, got %d", len(files))
-			return
-		}
-
-		if len(files) >= 2 {
-			if files[0].ModTime.After(files[1].ModTime) {
-				t.Error("files are not sorted by modification time")
-				return
-			}
-		}
-	})
-
-	t.Run("get_total_size_by_suffix", func(t *testing.T) {
-		tempDir := t.TempDir()
-
-		filenames := map[string]int64{
-			"20060102-160506-fc89b5fe3ba17763fb1c.cast.gz":        10,
-			"20060102-170607-BFABF579D09DB9B069E1.CAST.GZ":        20,
-			"nested/20060102-150405-43ceb62ea6ea67455d73.cast.gz": 30,
-			"regular.txt": 40,
-			"other.txt":   50,
-		}
-
-		for filename, size := range filenames {
-			path := filepath.Join(tempDir, filename)
-			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-				t.Errorf("failed to create directory for file %s: %v", filename, err)
-				return
-			}
-			if err := os.WriteFile(path, make([]byte, size), 0o600); err != nil {
-				t.Errorf("failed to create file %s: %v", filename, err)
-				return
-			}
-		}
-
-		size, err := GetTotalSizeBySuffix(tempDir, ".cast.gz")
-		if err != nil {
-			t.Errorf("failed to get total size: %v", err)
-			return
-		}
-
-		if size != 60 {
-			t.Errorf("expected total size 60, got %d", size)
 			return
 		}
 	})

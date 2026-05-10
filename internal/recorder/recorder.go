@@ -26,10 +26,12 @@ var writerPool = sync.Pool{
 
 type AsciicastV3Recorder struct {
 	path    string
+	tmpPath string
 	file    *os.File
 	writer  *gzip.Writer
 	pending int
-	timer   *time.Timer
+	flush   *time.Timer
+	touch   *time.Timer
 	prev    time.Time
 	paused  bool
 	mu      sync.Mutex
@@ -52,6 +54,7 @@ type AsciicastV3Term struct {
 }
 
 type AsciicastV3Cardea struct {
+	NodeID        string `json:"node_id,omitempty"`
 	BackendTarget string `json:"backend_target"`
 	BackendAddr   string `json:"backend_addr"`
 	FrontendAddr  string `json:"frontend_addr"`
@@ -73,8 +76,10 @@ func NewAsciicastV3Header(title string) *AsciicastV3Header {
 }
 
 func NewAsciicastV3Recorder(path string) *AsciicastV3Recorder {
+	path = filepath.Clean(path)
 	return &AsciicastV3Recorder{
-		path: filepath.Clean(path),
+		path:    path,
+		tmpPath: path + ".tmp",
 	}
 }
 
@@ -86,13 +91,17 @@ func (r *AsciicastV3Recorder) WriteHeader(header *AsciicastV3Header) error {
 		return nil
 	}
 
-	file, err := os.OpenFile(r.path, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
+	if err := os.MkdirAll(filepath.Dir(r.tmpPath), 0700); err != nil {
+		return err
+	}
+
+	file, err := os.OpenFile(r.tmpPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
 
 	if err := disk.LockFile(file); err != nil {
-		slog.Warn("failed to get exclusive lock on file", "file", r.path, "error", err)
+		slog.Warn("failed to get exclusive lock on file", "file", r.tmpPath, "error", err)
 	}
 
 	r.file = file
@@ -112,12 +121,17 @@ func (r *AsciicastV3Recorder) WriteHeader(header *AsciicastV3Header) error {
 
 	r.pending += len(headerLine)
 	r.scheduleFlush()
+	r.scheduleTouch()
 
 	return nil
 }
 
-func (r *AsciicastV3Recorder) WriteExit(exitStatus uint32) error {
-	defer func() { _ = r.Close() }() // Next writes will be ignored
+func (r *AsciicastV3Recorder) WriteExit(exitStatus uint32) (err error) {
+	defer func() {
+		if cErr := r.Close(); err == nil && cErr != nil {
+			err = cErr
+		}
+	}() // Next writes will be ignored
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -246,9 +260,15 @@ func (r *AsciicastV3Recorder) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.timer != nil {
-		r.timer.Stop()
-		r.timer = nil
+	opened := r.writer != nil || r.file != nil
+
+	if r.flush != nil {
+		r.flush.Stop()
+		r.flush = nil
+	}
+	if r.touch != nil {
+		r.touch.Stop()
+		r.touch = nil
 	}
 
 	var wErr error
@@ -265,16 +285,22 @@ func (r *AsciicastV3Recorder) Close() error {
 		r.file = nil
 	}
 
-	return errors.Join(wErr, fErr)
+	if err := errors.Join(wErr, fErr); err != nil {
+		return err
+	}
+	if opened {
+		return os.Rename(r.tmpPath, r.path)
+	}
+	return nil
 }
 
 func (r *AsciicastV3Recorder) scheduleFlush() {
 	const delay = 50 * time.Millisecond
 	const threshold = 1024 // bytes
 
-	if r.timer != nil {
-		r.timer.Stop()
-		r.timer = nil
+	if r.flush != nil {
+		r.flush.Stop()
+		r.flush = nil
 	}
 
 	if r.pending >= threshold {
@@ -285,13 +311,27 @@ func (r *AsciicastV3Recorder) scheduleFlush() {
 		return
 	}
 
-	r.timer = time.AfterFunc(delay, func() {
+	r.flush = time.AfterFunc(delay, func() {
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		if r.writer != nil {
 			_ = r.writer.Flush()
 			r.pending = 0
 		}
-		r.timer = nil
+		r.flush = nil
+	})
+}
+
+func (r *AsciicastV3Recorder) scheduleTouch() {
+	r.touch = time.AfterFunc(time.Minute, func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.file == nil {
+			r.touch = nil
+			return
+		}
+		now := time.Now()
+		_ = os.Chtimes(r.tmpPath, now, now)
+		r.scheduleTouch()
 	})
 }

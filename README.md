@@ -105,6 +105,8 @@ Download from the [releases page](https://github.com/hectorm/cardea/releases). B
       address for the SSH server (env CARDEA_LISTEN) (default ":2222")
 -health-listen string
       address for the health/metrics server; disabled if empty (env CARDEA_HEALTH_LISTEN) (default "localhost:9222")
+-node-id string
+      stable identifier for the instance; expands ${VAR} from the environment (env CARDEA_NODE_ID)
 -key-strategy string
       key strategy for bastion host/backend authentication: file, tpm (env CARDEA_KEY_STRATEGY) (default "file")
 -private-key-file string
@@ -146,7 +148,7 @@ Download from the [releases page](https://github.com/hectorm/cardea/releases). B
 -recordings-retention-time duration
       retention time for the session recordings (env CARDEA_RECORDINGS_RETENTION_TIME) (default 720h0m0s)
 -recordings-max-disk-usage string
-      maximum disk usage for session recordings; accepts percentage (e.g. 90%) or fixed size (e.g. 1GB) (env CARDEA_RECORDINGS_MAX_DISK_USAGE) (default "90%")
+      maximum disk usage for session recordings; accepts percentage (e.g. 90%) or fixed size (e.g. 1GB) (env CARDEA_RECORDINGS_MAX_DISK_USAGE) (default "0")
 -log-level string
       log level: debug, info, warn, error, quiet (env CARDEA_LOG_LEVEL) (default "info")
 -version
