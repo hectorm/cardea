@@ -235,12 +235,6 @@ func WithRateLimit(rateLimit *ratelimit.RateLimit) Option {
 func (srv *Server) Start() error {
 	slog.Info("starting SSH server")
 
-	go srv.fileWatcher()
-
-	if srv.config.RecordingsDir != "" {
-		go srv.diskCleanupWorker()
-	}
-
 	var err error
 	if srv.listener, err = net.Listen("tcp", srv.config.Listen); err != nil {
 		return err
@@ -252,6 +246,9 @@ func (srv *Server) Start() error {
 		"fingerprint", ssh.FingerprintSHA256(srv.signer.PublicKey()),
 		"public_key", srv.marshalAuthorizedKey(srv.signer.PublicKey()),
 	)
+
+	srv.fileWatcher()
+	srv.diskCleanupWorker()
 
 	go func() {
 		for {
@@ -1575,7 +1572,6 @@ func (srv *Server) fileWatcher() {
 		slog.Error("failed to create file watcher", "error", err)
 		return
 	}
-	defer func() { _ = watcher.Close() }()
 
 	authorizedKeysFile := filepath.Clean(srv.config.AuthorizedKeysFile)
 	knownHostsFile := filepath.Clean(srv.config.KnownHostsFile)
@@ -1597,103 +1593,109 @@ func (srv *Server) fileWatcher() {
 		}
 	}
 
-	waitFor := 100 * time.Millisecond
-	timers := make(map[string]*time.Timer)
+	go func() {
+		defer func() { _ = watcher.Close() }()
 
-	for {
-		select {
-		case event, ok := <-watcher.Events:
-			if !ok {
+		waitFor := 100 * time.Millisecond
+		timers := make(map[string]*time.Timer)
+
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+
+				if !event.Has(fsnotify.Create) && !event.Has(fsnotify.Write) {
+					continue
+				}
+
+				file := filepath.Clean(event.Name)
+				if file != authorizedKeysFile && file != knownHostsFile && file != bannerFile {
+					continue
+				}
+
+				t, ok := timers[file]
+
+				if !ok {
+					file := file
+					t = time.AfterFunc(math.MaxInt64, func() {
+						switch file {
+						case authorizedKeysFile:
+							authKeysDB, err := srv.newAuthorizedKeysDB(file)
+							if err != nil {
+								slog.Error("error reloading authorized keys file", "error", err)
+							} else {
+								srv.authKeysMu.Lock()
+								srv.authKeysDB = authKeysDB
+								srv.authKeysMu.Unlock()
+								slog.Debug("reloaded authorized keys file", "file", file)
+							}
+						case knownHostsFile:
+							hostKeysDB, err := srv.newHostKeysDB(file)
+							if err != nil {
+								slog.Error("error reloading known hosts file", "error", err)
+							} else {
+								srv.hostKeysMu.Lock()
+								srv.hostKeysDB = hostKeysDB
+								srv.hostKeysMu.Unlock()
+								slog.Debug("reloaded known hosts file", "file", file)
+							}
+						case bannerFile:
+							banner, err := srv.loadBanner(file)
+							if err != nil {
+								slog.Error("error reloading banner file", "error", err)
+							} else {
+								srv.bannerMu.Lock()
+								srv.banner = banner
+								srv.bannerMu.Unlock()
+								slog.Debug("reloaded banner file", "file", file)
+							}
+						}
+					})
+					t.Stop()
+
+					timers[file] = t
+				}
+
+				t.Reset(waitFor)
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				slog.Error("file watcher error", "error", err)
+			case <-srv.ctx.Done():
 				return
 			}
-
-			if !event.Has(fsnotify.Create) && !event.Has(fsnotify.Write) {
-				continue
-			}
-
-			file := filepath.Clean(event.Name)
-			if file != authorizedKeysFile && file != knownHostsFile && file != bannerFile {
-				continue
-			}
-
-			t, ok := timers[file]
-
-			if !ok {
-				file := file
-				t = time.AfterFunc(math.MaxInt64, func() {
-					switch file {
-					case authorizedKeysFile:
-						authKeysDB, err := srv.newAuthorizedKeysDB(file)
-						if err != nil {
-							slog.Error("error reloading authorized keys file", "error", err)
-						} else {
-							srv.authKeysMu.Lock()
-							srv.authKeysDB = authKeysDB
-							srv.authKeysMu.Unlock()
-							slog.Debug("reloaded authorized keys file", "file", file)
-						}
-					case knownHostsFile:
-						hostKeysDB, err := srv.newHostKeysDB(file)
-						if err != nil {
-							slog.Error("error reloading known hosts file", "error", err)
-						} else {
-							srv.hostKeysMu.Lock()
-							srv.hostKeysDB = hostKeysDB
-							srv.hostKeysMu.Unlock()
-							slog.Debug("reloaded known hosts file", "file", file)
-						}
-					case bannerFile:
-						banner, err := srv.loadBanner(file)
-						if err != nil {
-							slog.Error("error reloading banner file", "error", err)
-						} else {
-							srv.bannerMu.Lock()
-							srv.banner = banner
-							srv.bannerMu.Unlock()
-							slog.Debug("reloaded banner file", "file", file)
-						}
-					}
-				})
-				t.Stop()
-
-				timers[file] = t
-			}
-
-			t.Reset(waitFor)
-		case err, ok := <-watcher.Errors:
-			if !ok {
-				return
-			}
-			slog.Error("file watcher error", "error", err)
-		case <-srv.ctx.Done():
-			return
 		}
-	}
+	}()
 }
 
 func (srv *Server) diskCleanupWorker() {
-	timer := time.NewTimer(time.Hour + rand.N(time.Hour)) // #nosec G404
-	defer timer.Stop()
-
-	for {
-		select {
-		case <-timer.C:
-			if _, _, err := srv.diskCleanup(); err != nil {
-				slog.Error("disk cleanup failed", "error", err)
-			}
-			timer.Reset(time.Hour + rand.N(time.Hour)) // #nosec G404
-		case <-srv.ctx.Done():
-			return
-		}
+	hasPolicy := srv.config.RecordingsRetentionTime > 0 || srv.recordingsMaxPercent > 0 || srv.recordingsMaxBytes > 0
+	if srv.config.RecordingsDir == "" || !hasPolicy {
+		return
 	}
+
+	go func() {
+		timer := time.NewTimer(time.Hour + rand.N(time.Hour)) // #nosec G404
+		defer timer.Stop()
+
+		for {
+			select {
+			case <-timer.C:
+				if _, _, err := srv.diskCleanup(); err != nil {
+					slog.Error("disk cleanup failed", "error", err)
+				}
+				timer.Reset(time.Hour + rand.N(time.Hour)) // #nosec G404
+			case <-srv.ctx.Done():
+				return
+			}
+		}
+	}()
 }
 
 func (srv *Server) diskCleanup() (ok bool, deleted bool, err error) {
-	if srv.config.RecordingsDir == "" ||
-		(srv.config.RecordingsRetentionTime <= 0 && srv.recordingsMaxPercent <= 0 && srv.recordingsMaxBytes <= 0) {
-		return true, false, nil
-	}
-
 	if err := os.MkdirAll(srv.config.RecordingsDir, 0700); err != nil {
 		return false, false, err
 	}
