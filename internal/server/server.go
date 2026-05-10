@@ -43,6 +43,7 @@ const (
 	sshKeyFpExt    = "key-fingerprint"
 	sshKeyOptsExt  = "key-options"
 	sshConnTimeout = 10 * time.Second
+	sftpCommand    = "internal-sftp"
 )
 
 var (
@@ -741,6 +742,10 @@ func (srv *Server) handleRequests(
 			}
 			ok = true
 		case "exec":
+			if authKeyOpts.Command == sftpCommand {
+				slog.Warn("exec request ignored, command option is set", "command", authKeyOpts.Command)
+				break
+			}
 			var payload struct {
 				Command string
 			}
@@ -773,6 +778,10 @@ func (srv *Server) handleRequests(
 			}
 			ok = true
 		case "shell":
+			if authKeyOpts.Command == sftpCommand {
+				slog.Warn("shell request ignored, command option is set", "command", authKeyOpts.Command)
+				break
+			}
 			command := authKeyOpts.Command
 			if asciicastRec != nil && asciicastHeader != nil {
 				asciicastHeader.Command = command
@@ -809,18 +818,18 @@ func (srv *Server) handleRequests(
 			}
 			switch payload.Subsystem {
 			case "sftp":
-				if authKeyOpts.Command != "" && authKeyOpts.Command != "internal-sftp" {
+				if authKeyOpts.Command != "" && authKeyOpts.Command != sftpCommand {
 					slog.Warn("subsystem request ignored, command option is set", "command", authKeyOpts.Command)
 					break
 				}
 				if asciicastRec != nil && asciicastHeader != nil {
-					asciicastHeader.Command = "internal-sftp"
+					asciicastHeader.Command = sftpCommand
 					if err := asciicastRec.WriteHeader(asciicastHeader); err != nil {
 						slog.Error("failed to write header", "error", err)
 						break
 					}
 					if !ptyRequested {
-						if err := asciicastRec.Pause("internal-sftp"); err != nil {
+						if err := asciicastRec.Pause(sftpCommand); err != nil {
 							slog.Error("failed to pause recording", "error", err)
 							break
 						}
