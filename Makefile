@@ -14,12 +14,12 @@ GOFMT ?= gofmt
 GOFMT_ARGS ?=
 GOSEC ?= go run github.com/securego/gosec/v2/cmd/gosec@latest
 GOSEC_ARGS ?=
-GOVULNCHECK ?= go run golang.org/x/vuln/cmd/govulncheck@latest
-GOVULNCHECK_ARGS ?=
-STATICCHECK ?= go run honnef.co/go/tools/cmd/staticcheck@latest
-STATICCHECK_ARGS ?=
 MODERNIZE ?= go run golang.org/x/tools/go/analysis/passes/modernize/cmd/modernize@latest
 MODERNIZE_ARGS ?=
+STATICCHECK ?= go run honnef.co/go/tools/cmd/staticcheck@latest
+STATICCHECK_ARGS ?=
+GOVULNCHECK ?= go run golang.org/x/vuln/cmd/govulncheck@latest
+GOVULNCHECK_ARGS ?=
 INSTALL ?= install
 INSTALL_PROGRAM = $(INSTALL)
 INSTALL_DATA = $(INSTALL) -m 644
@@ -74,7 +74,7 @@ build: ./dist/$(EXEC)
 		'$(GO)' build $(GOFLAGS) -ldflags '$(GO_LDFLAGS)' -o '$@' ./cmd/cardea/
 
 .PHONY: lint
-lint: gofmt gosec govulncheck staticcheck modernize
+lint: gofmt gosec modernize staticcheck
 
 .PHONY: gofmt
 gofmt:
@@ -84,17 +84,17 @@ gofmt:
 gosec:
 	@$(GOSEC) -tests $(GOSEC_ARGS) ./...
 
-.PHONY: govulncheck
-govulncheck:
-	@$(GOVULNCHECK) -test $(GOVULNCHECK_ARGS) ./...
+.PHONY: modernize
+modernize:
+	@$(MODERNIZE) -test $(MODERNIZE_ARGS) ./...
 
 .PHONY: staticcheck
 staticcheck:
 	@$(STATICCHECK) -tests -checks=all,-ST1000 $(STATICCHECK_ARGS) ./...
 
-.PHONY: modernize
-modernize:
-	@$(MODERNIZE) -test $(MODERNIZE_ARGS) ./...
+.PHONY: govulncheck
+govulncheck:
+	@$(GOVULNCHECK) -test $(GOVULNCHECK_ARGS) ./...
 
 .PHONY: test check
 test check:
@@ -112,7 +112,7 @@ install: ./dist/$(EXEC) installdirs
 
 .PHONY: install-strip
 install-strip:
-	$(MAKE) INSTALL_PROGRAM='$(INSTALL_PROGRAM) -s' install
+	@$(MAKE) INSTALL_PROGRAM='$(INSTALL_PROGRAM) -s' install
 
 .PHONY: installcheck
 installcheck:
@@ -120,8 +120,8 @@ installcheck:
 
 .PHONY: uninstall
 uninstall:
-	rm -fv '$(DESTDIR)$(bindir)/cardea'
+	@rm -fv '$(DESTDIR)$(bindir)/cardea'
 
 .PHONY: clean distclean
 clean distclean:
-	rm -rfv './dist/'
+	@rm -rfv './dist/'

@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
-name: "CodeQL"
+name: "Security"
 
 on:
   push:
@@ -39,3 +39,30 @@ jobs:
         uses: "github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa"
         with:
           category: "/language:${{matrix.language}}"
+
+  govulncheck:
+    name: "Analyze (govulncheck)"
+    runs-on: "ubuntu-latest"
+    permissions:
+      contents: "read"
+      security-events: "write"
+    steps:
+      - name: "Checkout"
+        uses: "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
+      - name: "Get Go version"
+        id: "go-version"
+        uses: "./.github/actions/go-version"
+      - name: "Set up Go"
+        uses: "actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c"
+        with:
+          go-version: "${{ steps.go-version.outputs.version }}"
+          check-latest: true
+      - name: "Run govulncheck"
+        run: |
+          { make govulncheck GOVULNCHECK_ARGS="-format sarif" ||:; } | tee ./govulncheck.sarif
+      - name: "Upload SARIF"
+        if: always()
+        uses: "github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa"
+        with:
+          sarif_file: "./govulncheck.sarif"
+          category: "govulncheck"

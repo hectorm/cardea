@@ -37,7 +37,6 @@ jobs:
     runs-on: "ubuntu-latest"
     permissions:
       contents: "read"
-      security-events: "write"
     steps:
       - name: "Checkout"
         uses: "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
@@ -51,62 +50,7 @@ jobs:
           check-latest: true
       - name: "Run gosec"
         run: |
-          { make gosec GOSEC_ARGS="-fmt sarif -no-fail" ||:; } | tee ./gosec.sarif
-          jq -e '[.runs[].results] | add | length == 0' ./gosec.sarif >/dev/null
-      - name: "Upload SARIF"
-        if: always()
-        uses: "github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa"
-        with:
-          sarif_file: "./gosec.sarif"
-          category: "gosec"
-
-  govulncheck:
-    name: "Run govulncheck"
-    runs-on: "ubuntu-latest"
-    permissions:
-      contents: "read"
-      security-events: "write"
-    steps:
-      - name: "Checkout"
-        uses: "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
-      - name: "Get Go version"
-        id: "go-version"
-        uses: "./.github/actions/go-version"
-      - name: "Set up Go"
-        uses: "actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c"
-        with:
-          go-version: "${{ steps.go-version.outputs.version }}"
-          check-latest: true
-      - name: "Run govulncheck"
-        run: |
-          { make govulncheck GOVULNCHECK_ARGS="-format sarif" ||:; } | tee ./govulncheck.sarif
-          jq -e '[.runs[].results] | add | length == 0' ./govulncheck.sarif >/dev/null
-      - name: "Upload SARIF"
-        if: always()
-        uses: "github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa"
-        with:
-          sarif_file: "./govulncheck.sarif"
-          category: "govulncheck"
-
-  staticcheck:
-    name: "Run staticcheck"
-    runs-on: "ubuntu-latest"
-    permissions:
-      contents: "read"
-    steps:
-      - name: "Checkout"
-        uses: "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
-      - name: "Get Go version"
-        id: "go-version"
-        uses: "./.github/actions/go-version"
-      - name: "Set up Go"
-        uses: "actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c"
-        with:
-          go-version: "${{ steps.go-version.outputs.version }}"
-          check-latest: true
-      - name: "Run staticcheck"
-        run: |
-          make staticcheck
+          make gosec
 
   modernize:
     name: "Run modernize"
@@ -128,9 +72,29 @@ jobs:
         run: |
           make modernize
 
+  staticcheck:
+    name: "Run staticcheck"
+    runs-on: "ubuntu-latest"
+    permissions:
+      contents: "read"
+    steps:
+      - name: "Checkout"
+        uses: "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
+      - name: "Get Go version"
+        id: "go-version"
+        uses: "./.github/actions/go-version"
+      - name: "Set up Go"
+        uses: "actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c"
+        with:
+          go-version: "${{ steps.go-version.outputs.version }}"
+          check-latest: true
+      - name: "Run staticcheck"
+        run: |
+          make staticcheck
+
   test:
     name: "Test on ${{ matrix.os }}"
-    needs: ["gofmt", "gosec", "govulncheck", "staticcheck", "modernize"]
+    needs: ["gofmt", "gosec", "modernize", "staticcheck"]
     runs-on: "${{ matrix.os }}"
     permissions:
       contents: "read"
