@@ -55,7 +55,7 @@ jobs:
           jq -e '[.runs[].results] | add | length == 0' ./gosec.sarif >/dev/null
       - name: "Upload SARIF"
         if: always()
-        uses: "github/codeql-action/upload-sarif@68bde559dea0fdcac2102bfdf6230c5f70eb485e"
+        uses: "github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa"
         with:
           sarif_file: "./gosec.sarif"
           category: "gosec"
@@ -83,7 +83,7 @@ jobs:
           jq -e '[.runs[].results] | add | length == 0' ./govulncheck.sarif >/dev/null
       - name: "Upload SARIF"
         if: always()
-        uses: "github/codeql-action/upload-sarif@68bde559dea0fdcac2102bfdf6230c5f70eb485e"
+        uses: "github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa"
         with:
           sarif_file: "./govulncheck.sarif"
           category: "govulncheck"
@@ -251,21 +251,21 @@ jobs:
         uses: "hectorm/ghaction-docker-buildx-setup@fec3efdbb455c2aa58a4fbfd11a9853f5de2cdba"
       - name: "Login to GitHub Container Registry"
         if: "github.event_name != 'pull_request'"
-        uses: "docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121"
+        uses: "docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee"
         with:
           registry: "ghcr.io"
           username: "${{ github.actor }}"
           password: "${{ secrets.GITHUB_TOKEN }}"
       - name: "Login to Docker Hub"
         if: "github.event_name != 'pull_request'"
-        uses: "docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121"
+        uses: "docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee"
         with:
           registry: "docker.io"
           username: "${{ secrets.DOCKERHUB_USERNAME }}"
           password: "${{ secrets.DOCKERHUB_TOKEN }}"
       - name: "Extract metadata"
         id: "meta"
-        uses: "docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf"
+        uses: "docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9"
         with:
           images: |
             ghcr.io/${{ github.repository }}
