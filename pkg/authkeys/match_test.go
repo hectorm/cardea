@@ -53,6 +53,8 @@ func TestAuthkeysMatchers(t *testing.T) {
 		}{
 			{name: "glob_case_insensitive", pattern: "*.Example.com", host: "api.example.com", want: true},
 			{name: "cidr", pattern: "10.0.0.0/8", host: "10.1.2.3", want: true},
+			{name: "cidr_ipv6", pattern: "2001:db8::/32", host: "2001:db8::1", want: true},
+			{name: "cidr_no_match", pattern: "10.0.0.0/8", host: "11.1.2.3", want: false},
 			{name: "cidr_non_ip", pattern: "10.0.0.0/8", host: "api.example.com", want: false},
 			{name: "too_long", pattern: "*", host: strings.Repeat("a", 256), want: false},
 		}

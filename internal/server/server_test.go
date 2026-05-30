@@ -236,7 +236,7 @@ func waitForInitialPrompt(timeout time.Duration, t testing.TB, stdout io.Reader)
 	return nil
 }
 
-func waitForSessionClose(timeout time.Duration, t testing.TB, session *ssh.Session) error {
+func waitForCleanExit(timeout time.Duration, t testing.TB, session *ssh.Session) error {
 	t.Helper()
 
 	done := make(chan error, 1)
@@ -246,14 +246,26 @@ func waitForSessionClose(timeout time.Duration, t testing.TB, session *ssh.Sessi
 
 	select {
 	case err := <-done:
-		if err != nil {
-			return err
-		}
+		return err
 	case <-time.After(timeout):
 		return fmt.Errorf("session did not close within timeout")
 	}
+}
 
-	return nil
+func waitForSessionEnd(timeout time.Duration, t testing.TB, session *ssh.Session) error {
+	t.Helper()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- session.Wait()
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-time.After(timeout):
+		return fmt.Errorf("session did not end within timeout")
+	}
 }
 
 func executeShellCommand(t testing.TB, stdin io.WriteCloser, stdout io.Reader, command string) (string, error) {
@@ -1291,7 +1303,7 @@ func TestBastionSSHServer(t *testing.T) {
 					return
 				}
 
-				if err := waitForSessionClose(1*time.Second, t, session); err != nil {
+				if err := waitForCleanExit(1*time.Second, t, session); err != nil {
 					t.Errorf("session did not close as expected: %v", err)
 					return
 				}
@@ -3287,6 +3299,101 @@ func TestBastionSSHServer(t *testing.T) {
 			return nil
 		}); err != nil {
 			t.Error(err)
+			return
+		}
+	})
+
+	t.Run("authorized_keys_revalidation", func(t *testing.T) {
+		cli, cliPublicKey, err := setupClient(t)
+		if err != nil {
+			t.Errorf("failed to setup client: %v", err)
+			return
+		}
+		cli.User = fmt.Sprintf("alice@%s", mockAddr)
+		cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
+
+		bastionSrv, err := setupBastionServer(t,
+			fmt.Sprintf(`permitconnect="alice@%s" %s`, mockAddr, cliAuthorizedKeyStr),
+			fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+		)
+		if err != nil {
+			t.Errorf("failed to setup bastion server: %v", err)
+			return
+		}
+		bastionCfg := bastionSrv.Config()
+
+		bastionConn, err := connectToServer(t, cli, bastionSrv)
+		if err != nil {
+			t.Errorf("failed to connect to server: %v", err)
+			return
+		}
+
+		session, _, stdout, err := createShellSession(t, bastionConn)
+		if err != nil {
+			t.Errorf("failed to create shell session: %v", err)
+			return
+		}
+
+		if err := waitForInitialPrompt(2*time.Second, t, stdout); err != nil {
+			t.Errorf("failed to wait for initial prompt: %v", err)
+			return
+		}
+
+		if err := os.WriteFile(bastionCfg.AuthorizedKeysFile, []byte(""), 0600); err != nil {
+			t.Error(err)
+			return
+		}
+
+		if err := waitForSessionEnd(30*time.Second, t, session); err != nil {
+			t.Error(err)
+			return
+		}
+	})
+
+	t.Run("authorized_keys_revalidation_keeps_authorized", func(t *testing.T) {
+		cli, cliPublicKey, err := setupClient(t)
+		if err != nil {
+			t.Errorf("failed to setup client: %v", err)
+			return
+		}
+		cli.User = fmt.Sprintf("alice@%s", mockAddr)
+		cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
+
+		bastionSrv, err := setupBastionServer(t,
+			fmt.Sprintf(`permitconnect="alice@%s" %s`, mockAddr, cliAuthorizedKeyStr),
+			fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+		)
+		if err != nil {
+			t.Errorf("failed to setup bastion server: %v", err)
+			return
+		}
+		bastionCfg := bastionSrv.Config()
+
+		bastionConn, err := connectToServer(t, cli, bastionSrv)
+		if err != nil {
+			t.Errorf("failed to connect to server: %v", err)
+			return
+		}
+
+		session, _, stdout, err := createShellSession(t, bastionConn)
+		if err != nil {
+			t.Errorf("failed to create shell session: %v", err)
+			return
+		}
+
+		if err := waitForInitialPrompt(2*time.Second, t, stdout); err != nil {
+			t.Errorf("failed to wait for initial prompt: %v", err)
+			return
+		}
+
+		authorizedKeysContent := fmt.Sprintf(`permitconnect="alice@%s",permitconnect="carol@%s" %s`, mockAddr, mockAddr, cliAuthorizedKeyStr)
+		if err := os.WriteFile(bastionCfg.AuthorizedKeysFile, []byte(authorizedKeysContent), 0600); err != nil {
+			t.Error(err)
+			return
+		}
+
+		if err := waitForSessionEnd(3*time.Second, t, session); err == nil {
+			t.Error("session was closed after a benign authorized_keys change")
 			return
 		}
 	})

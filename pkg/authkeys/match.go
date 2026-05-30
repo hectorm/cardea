@@ -3,7 +3,7 @@ package authkeys
 import (
 	"fmt"
 	"math"
-	"net"
+	"net/netip"
 	"path"
 	"strconv"
 	"strings"
@@ -28,26 +28,49 @@ func MatchHostPattern(pattern, host string) bool {
 		return false
 	}
 
-	if MatchNamePattern(strings.ToLower(pattern), strings.ToLower(host)) {
-		return true
+	if strings.Contains(pattern, "/") {
+		prefix, err := netip.ParsePrefix(pattern)
+		if err != nil {
+			return false
+		}
+		addr, err := netip.ParseAddr(host)
+		if err != nil {
+			return false
+		}
+		return prefix.Contains(addr)
 	}
 
-	_, cidr, err := net.ParseCIDR(pattern)
-	if err != nil {
-		return false
-	}
-
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return false
-	}
-
-	return cidr.Contains(ip)
+	return MatchNamePattern(strings.ToLower(pattern), strings.ToLower(host))
 }
 
 func MatchPortPattern(pattern string, port any) bool {
-	targetPort, err := strconv.ParseUint(fmt.Sprintf("%v", port), 10, 16)
-	if err != nil || targetPort > math.MaxUint16 {
+	var targetPort uint64
+	switch p := port.(type) {
+	case uint16:
+		targetPort = uint64(p)
+	case uint32:
+		targetPort = uint64(p)
+	case uint64:
+		targetPort = p
+	case int:
+		if p < 0 {
+			return false
+		}
+		targetPort = uint64(p)
+	case string:
+		v, err := strconv.ParseUint(p, 10, 16)
+		if err != nil {
+			return false
+		}
+		targetPort = v
+	default:
+		v, err := strconv.ParseUint(fmt.Sprintf("%v", port), 10, 16)
+		if err != nil {
+			return false
+		}
+		targetPort = v
+	}
+	if targetPort > math.MaxUint16 {
 		return false
 	}
 
@@ -55,15 +78,12 @@ func MatchPortPattern(pattern string, port any) bool {
 		return true
 	}
 
-	if strings.Contains(pattern, "-") {
-		parts := strings.Split(pattern, "-")
-		if len(parts) == 2 {
-			startPort, startErr := strconv.ParseUint(parts[0], 10, 16)
-			endPort, endErr := strconv.ParseUint(parts[1], 10, 16)
-			if startErr == nil && endErr == nil && startPort <= endPort {
-				if targetPort >= startPort && targetPort <= endPort {
-					return true
-				}
+	if startStr, endStr, isRange := strings.Cut(pattern, "-"); isRange {
+		startPort, startErr := strconv.ParseUint(startStr, 10, 16)
+		endPort, endErr := strconv.ParseUint(endStr, 10, 16)
+		if startErr == nil && endErr == nil && startPort <= endPort {
+			if targetPort >= startPort && targetPort <= endPort {
+				return true
 			}
 		}
 	} else {

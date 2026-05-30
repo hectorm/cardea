@@ -150,7 +150,7 @@ func ParseOptions(opts []string) (*AuthorizedKeyOptions, error) {
 				if err != nil {
 					return nil, fmt.Errorf("invalid permitconnect: %w", err)
 				}
-				authKeyOpts.PermitConnects = append(authKeyOpts.PermitConnects, *permitconnect)
+				authKeyOpts.PermitConnects = append(authKeyOpts.PermitConnects, permitconnect)
 			}
 		case "permitopen":
 			for v := range strings.SplitSeq(val, ",") {
@@ -158,7 +158,7 @@ func ParseOptions(opts []string) (*AuthorizedKeyOptions, error) {
 				if err != nil {
 					return nil, fmt.Errorf("invalid permitopen: %w", err)
 				}
-				authKeyOpts.PermitOpens = append(authKeyOpts.PermitOpens, *permitopen)
+				authKeyOpts.PermitOpens = append(authKeyOpts.PermitOpens, permitopen)
 			}
 		case "permitlisten":
 			for v := range strings.SplitSeq(val, ",") {
@@ -166,26 +166,26 @@ func ParseOptions(opts []string) (*AuthorizedKeyOptions, error) {
 				if err != nil {
 					return nil, fmt.Errorf("invalid permitlisten: %w", err)
 				}
-				authKeyOpts.PermitListens = append(authKeyOpts.PermitListens, *permitlisten)
+				authKeyOpts.PermitListens = append(authKeyOpts.PermitListens, permitlisten)
 			}
 		case "permitsocketopen":
 			permitsocketopen, err := ParsePermitSocket(strings.TrimSpace(val))
 			if err != nil {
 				return nil, fmt.Errorf("invalid permitsocketopen: %w", err)
 			}
-			authKeyOpts.PermitSocketOpens = append(authKeyOpts.PermitSocketOpens, *permitsocketopen)
+			authKeyOpts.PermitSocketOpens = append(authKeyOpts.PermitSocketOpens, permitsocketopen)
 		case "permitsocketlisten":
 			permitsocketlisten, err := ParsePermitSocket(strings.TrimSpace(val))
 			if err != nil {
 				return nil, fmt.Errorf("invalid permitsocketlisten: %w", err)
 			}
-			authKeyOpts.PermitSocketListens = append(authKeyOpts.PermitSocketListens, *permitsocketlisten)
+			authKeyOpts.PermitSocketListens = append(authKeyOpts.PermitSocketListens, permitsocketlisten)
 		case "environment":
 			environment, err := ParseEnvironment(val)
 			if err != nil {
 				return nil, fmt.Errorf("invalid environment: %w", err)
 			}
-			authKeyOpts.Environments = append(authKeyOpts.Environments, *environment)
+			authKeyOpts.Environments = append(authKeyOpts.Environments, environment)
 		case "from":
 			for v := range strings.SplitSeq(val, ",") {
 				from, err := ParseFrom(strings.TrimSpace(v))
@@ -309,7 +309,7 @@ func QuoteOptionValue(s string) string {
 	return b.String()
 }
 
-func ParsePermitConnect(s string) (*PermitConnect, error) {
+func ParsePermitConnect(s string) (PermitConnect, error) {
 	if s != "" && len(s) <= MaxPermitConnectLength {
 		resolveHost := func(raw string) (string, bool) {
 			bracketed := strings.HasPrefix(raw, "[") && strings.HasSuffix(raw, "]")
@@ -335,10 +335,10 @@ func ParsePermitConnect(s string) (*PermitConnect, error) {
 			if user != "" && addr != "" {
 				host, port, err := net.SplitHostPort(addr)
 				if err == nil && host != "" && port != "" {
-					return &PermitConnect{User: user, Host: host, Port: port}, nil
+					return PermitConnect{User: user, Host: host, Port: port}, nil
 				}
 				if host, ok := resolveHost(addr); ok {
-					return &PermitConnect{User: user, Host: host, Port: "22"}, nil
+					return PermitConnect{User: user, Host: host, Port: "22"}, nil
 				}
 			}
 		}
@@ -351,77 +351,77 @@ func ParsePermitConnect(s string) (*PermitConnect, error) {
 			}
 			if user != "" && port != "" {
 				if host, ok := resolveHost(rawHost); ok {
-					return &PermitConnect{User: user, Host: host, Port: port}, nil
+					return PermitConnect{User: user, Host: host, Port: port}, nil
 				}
 			}
 		}
 	}
 
-	return nil, fmt.Errorf("expected <user>@<host>[:<port>] or <user>+<host>[+<port>], got %s", s)
+	return PermitConnect{}, fmt.Errorf("expected <user>@<host>[:<port>] or <user>+<host>[+<port>], got %s", s)
 }
 
-func ParsePermitTCP(s string) (*PermitTCP, error) {
+func ParsePermitTCP(s string) (PermitTCP, error) {
 	if s == "" {
-		return nil, fmt.Errorf("empty value")
+		return PermitTCP{}, fmt.Errorf("empty value")
 	}
 	if len(s) > MaxPermitTCPLength {
-		return nil, fmt.Errorf("exceeds maximum length of %d", MaxPermitTCPLength)
+		return PermitTCP{}, fmt.Errorf("exceeds maximum length of %d", MaxPermitTCPLength)
 	}
 
 	host, port, err := net.SplitHostPort(s)
 	if err != nil || host == "" || port == "" {
-		return nil, fmt.Errorf("expected <host>:<port>, got %s", s)
+		return PermitTCP{}, fmt.Errorf("expected <host>:<port>, got %s", s)
 	}
 
-	return &PermitTCP{Host: host, Port: port}, nil
+	return PermitTCP{Host: host, Port: port}, nil
 }
 
-func ParsePermitSocket(s string) (*PermitSocket, error) {
+func ParsePermitSocket(s string) (PermitSocket, error) {
 	if s == "" {
-		return nil, fmt.Errorf("empty value")
+		return PermitSocket{}, fmt.Errorf("empty value")
 	}
 	if len(s) > MaxPermitSocketLength {
-		return nil, fmt.Errorf("exceeds maximum length of %d", MaxPermitSocketLength)
+		return PermitSocket{}, fmt.Errorf("exceeds maximum length of %d", MaxPermitSocketLength)
 	}
 
 	if s == "*" {
-		return &PermitSocket{Path: s}, nil
+		return PermitSocket{Path: s}, nil
 	}
 
 	s = path.Clean(s)
-	return &PermitSocket{Path: s}, nil
+	return PermitSocket{Path: s}, nil
 }
 
-func ParseEnvironment(s string) (*Environment, error) {
+func ParseEnvironment(s string) (Environment, error) {
 	if len(s) > 0 && (s[0] == '+' || s[0] == '-') {
 		pattern := s[1:]
 		if pattern == "" {
-			return nil, fmt.Errorf("empty pattern")
+			return Environment{}, fmt.Errorf("empty pattern")
 		}
 		for _, c := range pattern {
 			if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '*' || c == '?' || c == '[' || c == ']') {
-				return nil, fmt.Errorf("pattern %q contains disallowed characters", pattern)
+				return Environment{}, fmt.Errorf("pattern %q contains disallowed characters", pattern)
 			}
 		}
 		if _, err := path.Match(pattern, ""); err != nil {
-			return nil, fmt.Errorf("pattern %q is malformed: %w", pattern, err)
+			return Environment{}, fmt.Errorf("pattern %q is malformed: %w", pattern, err)
 		}
-		return &Environment{Sign: string(s[0]), Name: pattern}, nil
+		return Environment{Sign: string(s[0]), Name: pattern}, nil
 	}
 
 	i := strings.IndexByte(s, '=')
 	if i < 1 {
-		return nil, fmt.Errorf("expected NAME=value, got %s", s)
+		return Environment{}, fmt.Errorf("expected NAME=value, got %s", s)
 	}
 
 	name := s[:i]
 	for _, c := range name {
 		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_') {
-			return nil, fmt.Errorf("variable name %q contains disallowed characters", name)
+			return Environment{}, fmt.Errorf("variable name %q contains disallowed characters", name)
 		}
 	}
 
-	return &Environment{Name: name, Value: s[i+1:]}, nil
+	return Environment{Name: name, Value: s[i+1:]}, nil
 }
 
 func ParseFrom(s string) (string, error) {
@@ -438,7 +438,7 @@ func ParseTimespec(s string) (time.Time, error) {
 	}
 
 	isUTC := false
-	if strings.HasSuffix(strings.ToUpper(s), "Z") {
+	if last := s[len(s)-1]; last == 'Z' || last == 'z' {
 		isUTC = true
 		s = s[:len(s)-1]
 	}

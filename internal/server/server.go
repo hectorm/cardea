@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -40,8 +39,6 @@ import (
 )
 
 const (
-	sshKeyFpExt    = "key-fingerprint"
-	sshKeyOptsExt  = "key-options"
 	sshConnTimeout = 10 * time.Second
 	sftpCommand    = "internal-sftp"
 )
@@ -79,6 +76,43 @@ type Server struct {
 	done                 chan struct{}
 	wg                   sync.WaitGroup
 }
+
+type authDenyReason string
+
+const (
+	authDenyReasonUnknownKey       authDenyReason = "unknown_key"
+	authDenyReasonInvalidBackend   authDenyReason = "invalid_backend"
+	authDenyReasonDeniedBackend    authDenyReason = "denied_backend"
+	authDenyReasonDeniedStartTime  authDenyReason = "denied_start_time"
+	authDenyReasonDeniedExpiryTime authDenyReason = "denied_expiry_time"
+	authDenyReasonDeniedTimeWindow authDenyReason = "denied_time_window"
+	authDenyReasonDeniedSource     authDenyReason = "denied_source"
+)
+
+type authDecision struct {
+	pubKeyOpts  *authkeys.AuthorizedKeyOptions
+	denyReason  authDenyReason
+	denyComment string
+}
+
+func (d authDecision) allowed() bool {
+	return d.pubKeyOpts != nil
+}
+
+type authRequest struct {
+	user              string
+	remoteAddr        net.Addr
+	sessionID         string
+	pubKey            string
+	pubKeyFingerprint string
+}
+
+type authConnection struct {
+	authRequest
+	pubKeyOpts *authkeys.AuthorizedKeyOptions
+}
+
+type authConnectionKey struct{}
 
 type Option func(*Server) error
 
@@ -249,6 +283,7 @@ func (srv *Server) Start() error {
 
 	srv.fileWatcher()
 	srv.diskCleanupWorker()
+	srv.revalidateActiveConnectionsWorker()
 
 	go func() {
 		for {
@@ -388,17 +423,20 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 	}
 	defer func() { _ = frontendConn.Close() }()
 
-	authKeyOptsStr := frontendConn.Permissions.Extensions[sshKeyOptsExt]
-	if authKeyOptsStr == "" {
+	if frontendConn.Permissions == nil {
+		return fmt.Errorf("authorization data not provided")
+	}
+	authConn, ok := frontendConn.Permissions.ExtraData[authConnectionKey{}].(*authConnection)
+	if !ok {
+		return fmt.Errorf("authorization data not provided")
+	}
+	if authConn.pubKeyOpts == nil {
 		return fmt.Errorf("authorized key options not provided")
 	}
 
-	var authKeyOpts authkeys.AuthorizedKeyOptions
-	if err := json.Unmarshal([]byte(authKeyOptsStr), &authKeyOpts); err != nil {
-		return err
-	}
+	srv.connMap.Store(tcpConn, authConn)
 
-	permitconnect, err := authkeys.ParsePermitConnect(frontendConn.User())
+	permitconnect, err := authkeys.ParsePermitConnect(authConn.user)
 	if err != nil {
 		return err
 	}
@@ -415,13 +453,13 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 			switch req.Type {
 			case "tcpip-forward", "cancel-tcpip-forward":
 				go func() {
-					if err := srv.handleTCPIPForward(backendConn, &authKeyOpts, req); err != nil {
+					if err := srv.handleTCPIPForward(backendConn, authConn.pubKeyOpts, req); err != nil {
 						slog.Error("tcpip-forward error", "error", err)
 					}
 				}()
 			case "streamlocal-forward@openssh.com", "cancel-streamlocal-forward@openssh.com":
 				go func() {
-					if err := srv.handleStreamLocalForward(backendConn, &authKeyOpts, req); err != nil {
+					if err := srv.handleStreamLocalForward(backendConn, authConn.pubKeyOpts, req); err != nil {
 						slog.Error("streamlocal-forward error", "error", err)
 					}
 				}()
@@ -444,19 +482,19 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 			switch newChannel.ChannelType() {
 			case "session":
 				go func() {
-					if err := srv.handleSession(frontendConn, backendConn, &authKeyOpts, newChannel); err != nil {
+					if err := srv.handleSession(frontendConn, backendConn, authConn, newChannel); err != nil {
 						slog.Error("session error", "error", err)
 					}
 				}()
 			case "direct-tcpip":
 				go func() {
-					if err := srv.handleDirectTCPIP(backendConn, &authKeyOpts, newChannel); err != nil {
+					if err := srv.handleDirectTCPIP(backendConn, authConn.pubKeyOpts, newChannel); err != nil {
 						slog.Error("direct-tcpip error", "error", err)
 					}
 				}()
 			case "direct-streamlocal@openssh.com":
 				go func() {
-					if err := srv.handleDirectStreamLocal(backendConn, &authKeyOpts, newChannel); err != nil {
+					if err := srv.handleDirectStreamLocal(backendConn, authConn.pubKeyOpts, newChannel); err != nil {
 						slog.Error("direct-streamlocal error", "error", err)
 					}
 				}()
@@ -479,7 +517,7 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 					continue
 				}
 				go func() {
-					if err := srv.handleForwardedTCPIP(frontendConn, &authKeyOpts, newChannel); err != nil {
+					if err := srv.handleForwardedTCPIP(frontendConn, authConn.pubKeyOpts, newChannel); err != nil {
 						slog.Error("forwarded-tcpip error", "error", err)
 					}
 				}()
@@ -489,7 +527,7 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 					continue
 				}
 				go func() {
-					if err := srv.handleForwardedStreamLocal(frontendConn, &authKeyOpts, newChannel); err != nil {
+					if err := srv.handleForwardedStreamLocal(frontendConn, authConn.pubKeyOpts, newChannel); err != nil {
 						slog.Error("forwarded-streamlocal error", "error", err)
 					}
 				}()
@@ -502,7 +540,10 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 	return nil
 }
 
-func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.Client, authKeyOpts *authkeys.AuthorizedKeyOptions, newChannel ssh.NewChannel) error {
+func (srv *Server) handleSession(
+	frontendConn *ssh.ServerConn, backendConn *ssh.Client,
+	authConn *authConnection, newChannel ssh.NewChannel,
+) error {
 	backendSession, err := backendConn.NewSession()
 	if err != nil {
 		_ = newChannel.Reject(ssh.ConnectionFailed, "internal error")
@@ -522,16 +563,15 @@ func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.
 
 	var asciicastRec *recorder.AsciicastV3Recorder
 	var asciicastHeader *recorder.AsciicastV3Header
-	if srv.config.RecordingsDir != "" && !authKeyOpts.NoRecording {
+	if srv.config.RecordingsDir != "" && !authConn.pubKeyOpts.NoRecording {
 		now := time.Now().UTC()
-		sessionID := hex.EncodeToString(frontendConn.SessionID()[:10])
 		nodeSuffix := ""
 		if srv.config.NodeID != "" {
 			nodeSuffix = "-" + srv.config.NodeID
 		}
 		path := filepath.Join(
 			filepath.Join(srv.config.RecordingsDir, now.Format("2006"), now.Format("01"), now.Format("02")),
-			fmt.Sprintf("%s-%s%s.cast.gz", now.Format("150405"), sessionID, nodeSuffix),
+			fmt.Sprintf("%s-%s%s.cast.gz", now.Format("150405"), authConn.sessionID, nodeSuffix),
 		)
 		asciicastRec = recorder.NewAsciicastV3Recorder(path)
 		asciicastHeader = recorder.NewAsciicastV3Header(fmt.Sprintf(
@@ -544,14 +584,14 @@ func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.
 			BackendTarget: frontendConn.User(),
 			BackendAddr:   backendConn.RemoteAddr().String(),
 			FrontendAddr:  frontendConn.RemoteAddr().String(),
-			SessionID:     sessionID,
-			Fingerprint:   frontendConn.Permissions.Extensions[sshKeyFpExt],
-			Comment:       authKeyOpts.Comment,
+			SessionID:     authConn.sessionID,
+			Fingerprint:   authConn.pubKeyFingerprint,
+			Comment:       authConn.pubKeyOpts.Comment,
 		}
 		defer func() { _ = asciicastRec.Close() }()
 	}
 
-	for _, env := range authKeyOpts.Environments {
+	for _, env := range authConn.pubKeyOpts.Environments {
 		if env.Sign == "" {
 			if err := backendSession.Setenv(env.Name, env.Value); err != nil {
 				slog.Debug("failed to set environment variable from authorized key", "name", env.Name, "error", err)
@@ -604,7 +644,7 @@ func (srv *Server) handleSession(frontendConn *ssh.ServerConn, backendConn *ssh.
 	}()
 
 	go func() {
-		if err := srv.handleRequests(backendSession, authKeyOpts, requests, asciicastRec, asciicastHeader); err != nil {
+		if err := srv.handleRequests(backendSession, authConn.pubKeyOpts, requests, asciicastRec, asciicastHeader); err != nil {
 			slog.Error("failed to handle request", "error", err)
 		}
 		_ = backendSession.Close()
@@ -1220,7 +1260,7 @@ func (srv *Server) newFrontendConnection(tcpConn net.Conn) (*ssh.ServerConn, <-c
 	return sshConn, channels, requests, nil
 }
 
-func (srv *Server) newBackendConnection(permitconnect *authkeys.PermitConnect) (*ssh.Client, error) {
+func (srv *Server) newBackendConnection(permitconnect authkeys.PermitConnect) (*ssh.Client, error) {
 	user, host, port := permitconnect.User, permitconnect.Host, permitconnect.Port
 	addr := net.JoinHostPort(host, port)
 
@@ -1282,59 +1322,113 @@ func (srv *Server) newBackendConnection(permitconnect *authkeys.PermitConnect) (
 }
 
 func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+	authReq := authRequest{
+		user:              conn.User(),
+		remoteAddr:        conn.RemoteAddr(),
+		sessionID:         srv.shortSessionID(conn),
+		pubKey:            string(key.Marshal()),
+		pubKeyFingerprint: ssh.FingerprintSHA256(key),
+	}
+
+	decision := srv.authorizePublicKey(authReq)
+	if !decision.allowed() {
+		switch decision.denyReason {
+		case authDenyReasonUnknownKey:
+			srv.metrics.AuthFailuresUnknownKeyTotal.Add(1)
+		case authDenyReasonInvalidBackend:
+			srv.metrics.AuthFailuresInvalidBackendTotal.Add(1)
+		case authDenyReasonDeniedStartTime:
+			srv.metrics.AuthFailuresDeniedStartTimeTotal.Add(1)
+		case authDenyReasonDeniedExpiryTime:
+			srv.metrics.AuthFailuresDeniedExpiryTimeTotal.Add(1)
+		case authDenyReasonDeniedTimeWindow:
+			srv.metrics.AuthFailuresDeniedTimeWindowTotal.Add(1)
+		case authDenyReasonDeniedSource:
+			srv.metrics.AuthFailuresDeniedSourceTotal.Add(1)
+		default:
+			srv.metrics.AuthFailuresDeniedBackendTotal.Add(1)
+		}
+
+		switch decision.denyReason {
+		case authDenyReasonUnknownKey:
+			slog.Info("access denied, not in authorized keys list",
+				"backend", authReq.user,
+				"remote_addr", authReq.remoteAddr,
+				"session_id", authReq.sessionID,
+				"fingerprint", authReq.pubKeyFingerprint,
+			)
+		case authDenyReasonInvalidBackend:
+			slog.Info("access denied, invalid backend format",
+				"backend", authReq.user,
+				"remote_addr", authReq.remoteAddr,
+				"session_id", authReq.sessionID,
+				"fingerprint", authReq.pubKeyFingerprint,
+			)
+		default:
+			slog.Info("access denied",
+				"reason", string(decision.denyReason),
+				"backend", authReq.user,
+				"remote_addr", authReq.remoteAddr,
+				"session_id", authReq.sessionID,
+				"fingerprint", authReq.pubKeyFingerprint,
+				"comment", decision.denyComment,
+			)
+		}
+		return nil, fmt.Errorf("public key not authorized")
+	}
+
+	authConn := &authConnection{
+		authRequest: authReq,
+		pubKeyOpts:  decision.pubKeyOpts,
+	}
+	srv.metrics.AuthSuccessesTotal.Add(1)
+	slog.Info("access allowed",
+		"backend", authConn.user,
+		"remote_addr", authConn.remoteAddr,
+		"session_id", authConn.sessionID,
+		"fingerprint", authConn.pubKeyFingerprint,
+		"comment", authConn.pubKeyOpts.Comment,
+	)
+
+	return &ssh.Permissions{ExtraData: map[any]any{authConnectionKey{}: authConn}}, nil
+}
+
+func (srv *Server) authorizePublicKey(authReq authRequest) authDecision {
 	srv.authKeysMu.RLock()
-	defer srv.authKeysMu.RUnlock()
-
-	user := conn.User()
-	remoteAddr := conn.RemoteAddr()
-	remoteHost, _, _ := net.SplitHostPort(remoteAddr.String())
-	sessionID := hex.EncodeToString(conn.SessionID()[:10])
-	fingerprint := ssh.FingerprintSHA256(key)
-
-	authKeyEntries, ok := srv.authKeysDB[string(key.Marshal())]
+	authKeyEntries, ok := srv.authKeysDB[authReq.pubKey]
+	srv.authKeysMu.RUnlock()
 	if !ok {
-		srv.metrics.AuthFailuresUnknownKeyTotal.Add(1)
-		slog.Info("access denied, not in authorized keys list",
-			"backend", user,
-			"remote_addr", remoteAddr,
-			"session_id", sessionID,
-			"fingerprint", fingerprint,
-		)
-		return nil, fmt.Errorf("public key not authorized")
+		return authDecision{denyReason: authDenyReasonUnknownKey}
 	}
 
-	backend, err := authkeys.ParsePermitConnect(user)
+	backend, err := authkeys.ParsePermitConnect(authReq.user)
 	if err != nil {
-		srv.metrics.AuthFailuresInvalidBackendTotal.Add(1)
-		slog.Info("access denied, invalid backend format",
-			"backend", user,
-			"remote_addr", remoteAddr,
-			"session_id", sessionID,
-			"fingerprint", fingerprint,
-		)
-		return nil, fmt.Errorf("public key not authorized")
+		return authDecision{denyReason: authDenyReasonInvalidBackend}
 	}
 
-	var authKeyOpts *authkeys.AuthorizedKeyOptions
-	var denyReason string
-	var denyComment string
+	remoteHost := ""
+	if authReq.remoteAddr != nil && slices.ContainsFunc(authKeyEntries,
+		func(e *authkeys.AuthorizedKeyOptions) bool { return len(e.Froms) > 0 }) {
+		remoteHost, _, _ = net.SplitHostPort(authReq.remoteAddr.String())
+	}
 
+	decision := authDecision{denyReason: authDenyReasonDeniedBackend}
 	now := time.Now()
 	for _, entry := range authKeyEntries {
-		denyComment = entry.Comment
+		decision.denyComment = entry.Comment
 
 		if entry.StartTime != nil && now.Before(*entry.StartTime) {
-			denyReason = "denied_start_time"
+			decision.denyReason = authDenyReasonDeniedStartTime
 			continue
 		}
 
 		if entry.ExpiryTime != nil && now.After(*entry.ExpiryTime) {
-			denyReason = "denied_expiry_time"
+			decision.denyReason = authDenyReasonDeniedExpiryTime
 			continue
 		}
 
 		if entry.TimeWindow != nil && !entry.TimeWindow.Contains(now) {
-			denyReason = "denied_time_window"
+			decision.denyReason = authDenyReasonDeniedTimeWindow
 			continue
 		}
 
@@ -1354,72 +1448,76 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 				}
 			}
 			if !fromAllowed {
-				denyReason = "denied_source"
+				decision.denyReason = authDenyReasonDeniedSource
 				continue
 			}
 		}
 
 		backendAllowed := false
 		for _, pattern := range entry.PermitConnects {
-			if authkeys.MatchPermitConnect(pattern, *backend) {
+			if authkeys.MatchPermitConnect(pattern, backend) {
 				backendAllowed = true
 				break
 			}
 		}
 		if !backendAllowed {
-			denyReason = "denied_backend"
+			decision.denyReason = authDenyReasonDeniedBackend
 			continue
 		}
 
-		authKeyOpts = entry
-		break
+		return authDecision{pubKeyOpts: entry}
 	}
 
-	if authKeyOpts == nil {
-		switch denyReason {
-		case "denied_start_time":
-			srv.metrics.AuthFailuresDeniedStartTimeTotal.Add(1)
-		case "denied_expiry_time":
-			srv.metrics.AuthFailuresDeniedExpiryTimeTotal.Add(1)
-		case "denied_time_window":
-			srv.metrics.AuthFailuresDeniedTimeWindowTotal.Add(1)
-		case "denied_source":
-			srv.metrics.AuthFailuresDeniedSourceTotal.Add(1)
-		default:
-			srv.metrics.AuthFailuresDeniedBackendTotal.Add(1)
+	return decision
+}
+
+func (srv *Server) revalidateActiveConnections() {
+	srv.connMap.Range(func(key, value any) bool {
+		authConn, ok := value.(*authConnection)
+		if !ok {
+			return true
 		}
 
-		slog.Info("access denied",
-			"reason", denyReason,
-			"backend", user,
-			"remote_addr", remoteAddr,
-			"session_id", sessionID,
-			"fingerprint", fingerprint,
-			"comment", denyComment,
-		)
-		return nil, fmt.Errorf("public key not authorized")
-	}
+		decision := srv.authorizePublicKey(authConn.authRequest)
+		if decision.allowed() {
+			return true
+		}
 
-	authKeyOptsStr, err := json.Marshal(authKeyOpts)
-	if err != nil {
-		slog.Error("failed to encode authorized key", "error", err)
-		return nil, fmt.Errorf("internal error")
-	}
+		conn, ok := key.(net.Conn)
+		if !ok {
+			return true
+		}
 
-	srv.metrics.AuthSuccessesTotal.Add(1)
-	slog.Info("access allowed",
-		"backend", user,
-		"remote_addr", remoteAddr,
-		"session_id", sessionID,
-		"fingerprint", fingerprint,
-		"comment", authKeyOpts.Comment,
-	)
-	return &ssh.Permissions{
-		Extensions: map[string]string{
-			sshKeyFpExt:   fingerprint,
-			sshKeyOptsExt: string(authKeyOptsStr),
-		},
-	}, nil
+		if _, loaded := srv.connMap.LoadAndDelete(key); loaded {
+			slog.Info("closing connection, no longer authorized",
+				"reason", string(decision.denyReason),
+				"backend", authConn.user,
+				"remote_addr", authConn.remoteAddr,
+				"session_id", authConn.sessionID,
+				"fingerprint", authConn.pubKeyFingerprint,
+				"comment", decision.denyComment,
+			)
+			_ = conn.Close()
+		}
+
+		return true
+	})
+}
+
+func (srv *Server) revalidateActiveConnectionsWorker() {
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				srv.revalidateActiveConnections()
+			case <-srv.ctx.Done():
+				return
+			}
+		}
+	}()
 }
 
 func (srv *Server) hostKeyCallback(host string, remote net.Addr, key ssh.PublicKey) error {
@@ -1566,6 +1664,10 @@ func (srv *Server) marshalAuthorizedKey(key ssh.PublicKey) string {
 	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
 }
 
+func (srv *Server) shortSessionID(conn ssh.ConnMetadata) string {
+	return hex.EncodeToString(conn.SessionID()[:10])
+}
+
 func (srv *Server) fileWatcher() {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -1629,6 +1731,7 @@ func (srv *Server) fileWatcher() {
 								srv.authKeysMu.Lock()
 								srv.authKeysDB = authKeysDB
 								srv.authKeysMu.Unlock()
+								srv.revalidateActiveConnections()
 								slog.Debug("reloaded authorized keys file", "file", file)
 							}
 						case knownHostsFile:
@@ -1664,30 +1767,6 @@ func (srv *Server) fileWatcher() {
 					return
 				}
 				slog.Error("file watcher error", "error", err)
-			case <-srv.ctx.Done():
-				return
-			}
-		}
-	}()
-}
-
-func (srv *Server) diskCleanupWorker() {
-	hasPolicy := srv.config.RecordingsRetentionTime > 0 || srv.recordingsMaxPercent > 0 || srv.recordingsMaxBytes > 0
-	if srv.config.RecordingsDir == "" || !hasPolicy {
-		return
-	}
-
-	go func() {
-		timer := time.NewTimer(time.Hour + rand.N(time.Hour)) // #nosec G404
-		defer timer.Stop()
-
-		for {
-			select {
-			case <-timer.C:
-				if _, _, err := srv.diskCleanup(); err != nil {
-					slog.Error("disk cleanup failed", "error", err)
-				}
-				timer.Reset(time.Hour + rand.N(time.Hour)) // #nosec G404
 			case <-srv.ctx.Done():
 				return
 			}
@@ -1833,4 +1912,28 @@ func (srv *Server) diskCleanup() (ok bool, deleted bool, err error) {
 	}
 
 	return true, deleted, nil
+}
+
+func (srv *Server) diskCleanupWorker() {
+	hasPolicy := srv.config.RecordingsRetentionTime > 0 || srv.recordingsMaxPercent > 0 || srv.recordingsMaxBytes > 0
+	if srv.config.RecordingsDir == "" || !hasPolicy {
+		return
+	}
+
+	go func() {
+		timer := time.NewTimer(time.Hour + rand.N(time.Hour)) // #nosec G404
+		defer timer.Stop()
+
+		for {
+			select {
+			case <-timer.C:
+				if _, _, err := srv.diskCleanup(); err != nil {
+					slog.Error("disk cleanup failed", "error", err)
+				}
+				timer.Reset(time.Hour + rand.N(time.Hour)) // #nosec G404
+			case <-srv.ctx.Done():
+				return
+			}
+		}
+	}()
 }
