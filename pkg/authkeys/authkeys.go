@@ -311,22 +311,25 @@ func QuoteOptionValue(s string) string {
 
 func ParsePermitConnect(s string) (PermitConnect, error) {
 	if s != "" && len(s) <= MaxPermitConnectLength {
-		resolveHost := func(raw string) (string, bool) {
-			bracketed := strings.HasPrefix(raw, "[") && strings.HasSuffix(raw, "]")
-			host := raw
+		canonicalizeHost := func(host string) (string, bool) {
+			if ip := net.ParseIP(host); ip != nil {
+				return ip.String(), true
+			}
+			return strings.ToLower(host), false
+		}
+		normalizeHost := func(host string) (string, bool) {
+			bracketed := strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]")
 			if bracketed {
-				host = raw[1 : len(raw)-1]
+				host = host[1 : len(host)-1]
 			}
 			if host == "" {
 				return "", false
 			}
-			if ip := net.ParseIP(host); ip != nil {
-				return ip.String(), true
+			host, isIP := canonicalizeHost(host)
+			if !isIP && !bracketed && strings.Contains(host, ":") {
+				return "", false
 			}
-			if bracketed || !strings.Contains(host, ":") {
-				return host, true
-			}
-			return "", false
+			return host, true
 		}
 
 		// Try format <user>@<host>[:<port>]
@@ -335,9 +338,10 @@ func ParsePermitConnect(s string) (PermitConnect, error) {
 			if user != "" && addr != "" {
 				host, port, err := net.SplitHostPort(addr)
 				if err == nil && host != "" && port != "" {
+					host, _ = canonicalizeHost(host)
 					return PermitConnect{User: user, Host: host, Port: port}, nil
 				}
-				if host, ok := resolveHost(addr); ok {
+				if host, ok := normalizeHost(addr); ok {
 					return PermitConnect{User: user, Host: host, Port: "22"}, nil
 				}
 			}
@@ -345,12 +349,12 @@ func ParsePermitConnect(s string) (PermitConnect, error) {
 
 		// Try format <user>+<host>[+<port>]
 		if parts := strings.Split(s, "+"); len(parts) == 2 || len(parts) == 3 {
-			user, rawHost, port := parts[0], parts[1], "22"
+			user, host, port := parts[0], parts[1], "22"
 			if len(parts) == 3 {
 				port = parts[2]
 			}
 			if user != "" && port != "" {
-				if host, ok := resolveHost(rawHost); ok {
+				if host, ok := normalizeHost(host); ok {
 					return PermitConnect{User: user, Host: host, Port: port}, nil
 				}
 			}

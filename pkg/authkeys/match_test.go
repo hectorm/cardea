@@ -30,6 +30,7 @@ func TestAuthkeysMatchers(t *testing.T) {
 			want    bool
 		}{
 			{name: "exact", pattern: "root", user: "root", want: true},
+			{name: "case_sensitive", pattern: "alice", user: "ALICE", want: false},
 			{name: "wildcard", pattern: "*", user: "root", want: true},
 			{name: "empty", pattern: "*", user: "", want: false},
 			{name: "too_long", pattern: "*", user: strings.Repeat("a", 256), want: false},
@@ -52,6 +53,7 @@ func TestAuthkeysMatchers(t *testing.T) {
 			want    bool
 		}{
 			{name: "glob_case_insensitive", pattern: "*.Example.com", host: "api.example.com", want: true},
+			{name: "exact_case_insensitive", pattern: "example.com", host: "EXAMPLE.COM", want: true},
 			{name: "cidr", pattern: "10.0.0.0/8", host: "10.1.2.3", want: true},
 			{name: "cidr_ipv6", pattern: "2001:db8::/32", host: "2001:db8::1", want: true},
 			{name: "cidr_no_match", pattern: "10.0.0.0/8", host: "11.1.2.3", want: false},
