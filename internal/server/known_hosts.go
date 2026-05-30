@@ -38,8 +38,11 @@ func (srv *Server) newHostKeysDB(path string) (*hostKeysDB, error) {
 	caLines := make(map[int]struct{})
 	sc := bufio.NewScanner(f)
 	for lineNum := 1; sc.Scan(); lineNum++ {
-		line := bytes.TrimSpace(sc.Bytes())
-		if bytes.HasPrefix(line, []byte("@cert-authority ")) {
+		marker := bytes.TrimLeft(sc.Bytes(), " \t")
+		if i := bytes.IndexAny(marker, " \t"); i != -1 {
+			marker = marker[:i]
+		}
+		if bytes.Equal(marker, []byte("@cert-authority")) {
 			caLines[lineNum] = struct{}{}
 		}
 	}
