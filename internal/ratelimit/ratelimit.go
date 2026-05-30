@@ -2,6 +2,7 @@ package ratelimit
 
 import (
 	"container/list"
+	"net/netip"
 	"sync"
 	"time"
 )
@@ -16,7 +17,7 @@ type RateLimit struct {
 }
 
 type RateLimitEntry struct {
-	ip        string
+	key       string
 	count     int
 	expiresAt time.Time
 	element   *list.Element
@@ -33,11 +34,13 @@ func NewRateLimit(maxEntries, maxCount int, window time.Duration) *RateLimit {
 }
 
 func (rl *RateLimit) Take(ip string) bool {
+	key := rl.keyForIP(ip)
+
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
 	now := time.Now()
-	if entry, exists := rl.entries[ip]; exists {
+	if entry, exists := rl.entries[key]; exists {
 		rl.lru.MoveToFront(entry.element)
 		if now.After(entry.expiresAt) {
 			rl.resetEntryLocked(entry, now)
@@ -50,23 +53,35 @@ func (rl *RateLimit) Take(ip string) bool {
 		return true
 	}
 
-	rl.addEntryLocked(ip, now)
+	rl.addEntryLocked(key, now)
 	return true
 }
 
-func (rl *RateLimit) addEntryLocked(ip string, now time.Time) {
+func (rl *RateLimit) Reset(ip string) {
+	key := rl.keyForIP(ip)
+
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	if entry, exists := rl.entries[key]; exists {
+		delete(rl.entries, entry.key)
+		rl.lru.Remove(entry.element)
+	}
+}
+
+func (rl *RateLimit) addEntryLocked(key string, now time.Time) {
 	if rl.MaxEntries > 0 && rl.lru.Len() >= rl.MaxEntries {
 		if oldest := rl.lru.Back(); oldest != nil {
 			oldEntry := oldest.Value.(*RateLimitEntry)
-			delete(rl.entries, oldEntry.ip)
+			delete(rl.entries, oldEntry.key)
 			rl.lru.Remove(oldest)
 		}
 	}
 
-	entry := &RateLimitEntry{ip: ip}
+	entry := &RateLimitEntry{key: key}
 	rl.resetEntryLocked(entry, now)
 	entry.element = rl.lru.PushFront(entry)
-	rl.entries[ip] = entry
+	rl.entries[key] = entry
 }
 
 func (rl *RateLimit) resetEntryLocked(entry *RateLimitEntry, now time.Time) {
@@ -78,12 +93,20 @@ func (rl *RateLimit) resetEntryLocked(entry *RateLimitEntry, now time.Time) {
 	}
 }
 
-func (rl *RateLimit) Reset(ip string) {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
-	if entry, exists := rl.entries[ip]; exists {
-		delete(rl.entries, entry.ip)
-		rl.lru.Remove(entry.element)
+func (rl *RateLimit) keyForIP(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
 	}
+
+	addr = addr.Unmap().WithZone("")
+	if addr.Is4() {
+		return addr.String()
+	}
+
+	prefix, err := addr.Prefix(64)
+	if err != nil {
+		return addr.String()
+	}
+	return prefix.String()
 }
