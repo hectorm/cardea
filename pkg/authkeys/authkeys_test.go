@@ -26,8 +26,36 @@ func TestAuthkeys(t *testing.T) {
 			}
 		})
 
-		t.Run("macros", func(t *testing.T) {
+		t.Run("bare_macros", func(t *testing.T) {
 			content := []byte("#define OPTS permitconnect=\"*@example.com:22\"\nOPTS " + aliceKey + "\n")
+			db, warnings, err := ParseFile(content)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(warnings) != 0 {
+				t.Errorf("expected no warnings, got %d", len(warnings))
+			}
+			if len(db) != 1 {
+				t.Errorf("expected 1 key, got %d", len(db))
+			}
+		})
+
+		t.Run("braced_macros", func(t *testing.T) {
+			content := []byte("#define {{OPTS}} permitconnect=\"*@example.com:22\"\n{{OPTS}} " + aliceKey + "\n")
+			db, warnings, err := ParseFile(content)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(warnings) != 0 {
+				t.Errorf("expected no warnings, got %d", len(warnings))
+			}
+			if len(db) != 1 {
+				t.Errorf("expected 1 key, got %d", len(db))
+			}
+		})
+
+		t.Run("mixed_macros", func(t *testing.T) {
+			content := []byte("#define OPTS permitconnect=\"*@example.com:22\"\n{{OPTS}} " + aliceKey + "\n")
 			db, warnings, err := ParseFile(content)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)

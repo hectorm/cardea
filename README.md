@@ -253,7 +253,7 @@ The format supports comments, directives, line continuation, and pipe expansion:
 
 **Directives:**
 
-- **`#define NAME value`**: defines a macro (`[A-Za-z_][A-Za-z0-9_]*`) that is expanded everywhere, including inside quoted values.
+- **`#define (NAME|{{NAME}}) value`**: defines a macro (`[A-Za-z_][A-Za-z0-9_]*`). A bare name is expanded at both `NAME` and `{{NAME}}` references. A braced name is expanded only at a `{{NAME}}` reference. Both are expanded even inside quoted values.
 
 **Example:**
 

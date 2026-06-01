@@ -25,6 +25,7 @@ const (
 	tokPipe
 	tokComment
 	tokDefine
+	tokMacroRef
 )
 
 type token struct {
@@ -38,12 +39,24 @@ func (t token) val(input string) string {
 	return input[t.start:t.end]
 }
 
+func (t token) macroName(input string) string {
+	return input[t.start+2 : t.end-2]
+}
+
 var knownDirectives = []struct {
 	name    string
 	len     uint32
 	tokType tokenType
 }{
 	{"#define", 7, tokDefine},
+}
+
+func isNameStart(c byte) bool {
+	return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c == '_'
+}
+
+func isNameCont(c byte) bool {
+	return isNameStart(c) || c >= '0' && c <= '9'
 }
 
 type lexer struct {
@@ -201,6 +214,12 @@ func (l *lexer) scanToken() {
 		return
 	}
 
+	// Macro reference {{NAME}}
+	if l.scanMacroRef() {
+		l.bol = false
+		return
+	}
+
 	// NUL byte
 	if c == 0 {
 		l.emitError("line contains NUL byte")
@@ -257,20 +276,36 @@ func (l *lexer) scanWhitespace() bool {
 }
 
 func (l *lexer) scanIdent() bool {
-	c := l.peek()
-	if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c == '_') {
+	if !isNameStart(l.peek()) {
 		return false
 	}
 	start := l.pos
 	l.pos++
-	for l.pos < l.length {
-		c = l.peek()
-		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c == '_' || c >= '0' && c <= '9') {
-			break
-		}
+	for isNameCont(l.peek()) {
 		l.pos++
 	}
 	l.emit(tokIdent, start, l.pos)
+	return true
+}
+
+func (l *lexer) scanMacroRef() bool {
+	if l.peek() != '{' || l.peekAt(1) != '{' {
+		return false
+	}
+	off := uint32(2)
+	if !isNameStart(l.peekAt(off)) {
+		return false
+	}
+	off++
+	for isNameCont(l.peekAt(off)) {
+		off++
+	}
+	if l.peekAt(off) != '}' || l.peekAt(off+1) != '}' {
+		return false
+	}
+	end := l.pos + off + 2
+	l.emit(tokMacroRef, l.pos, end)
+	l.pos = end
 	return true
 }
 
@@ -328,6 +363,11 @@ func (l *lexer) scanQuotedInner() {
 		return
 	}
 
+	// Macro reference {{NAME}} inside quote
+	if l.scanMacroRef() {
+		return
+	}
+
 	// Other character
 	l.emit(tokOther, l.pos, l.pos+1)
 	l.pos++
@@ -350,17 +390,18 @@ func (l *lexer) matchDirective() (tokenType, uint32) {
 }
 
 type preprocessor struct {
-	lex         *lexer
-	input       string
-	macros      map[string][]token
-	currentLine []token
-	expandBuf   [2][]token   // reusable buffers for macro expansion
-	segBuf      bytes.Buffer // reusable buffer for pipe segment data
-	onLine      func(preprocessedLine)
-	onWarning   func(Warning)
-	cur         token
-	hasCur      bool
-	done        bool
+	lex          *lexer
+	input        string
+	bareMacros   map[string][]token
+	bracedMacros map[string][]token
+	currentLine  []token
+	expandBuf    [2][]token   // reusable buffers for macro expansion
+	segBuf       bytes.Buffer // reusable buffer for pipe segment data
+	onLine       func(preprocessedLine)
+	onWarning    func(Warning)
+	cur          token
+	hasCur       bool
+	done         bool
 }
 
 type preprocessedLine struct {
@@ -371,11 +412,12 @@ type preprocessedLine struct {
 
 func preprocess(content string, onLine func(preprocessedLine), onWarning func(Warning)) {
 	p := &preprocessor{
-		lex:       newLexer(content),
-		input:     content,
-		macros:    make(map[string][]token),
-		onLine:    onLine,
-		onWarning: onWarning,
+		lex:          newLexer(content),
+		input:        content,
+		bareMacros:   make(map[string][]token),
+		bracedMacros: make(map[string][]token),
+		onLine:       onLine,
+		onWarning:    onWarning,
 	}
 	p.run()
 }
@@ -495,13 +537,20 @@ func (p *preprocessor) handleDefine() {
 	defineTok := p.advance() // skip #define
 	p.skipWhitespace()
 
-	if p.peek().typ != tokIdent {
+	nameTok := p.peek()
+	var name string
+	var macros map[string][]token
+	switch nameTok.typ {
+	case tokMacroRef:
+		name, macros = nameTok.macroName(p.input), p.bracedMacros
+	case tokIdent:
+		name, macros = nameTok.val(p.input), p.bareMacros
+	default:
 		p.warn("expected identifier after #define", int(defineTok.line), "")
 		p.skipToNewline()
 		return
 	}
-
-	name := p.advance().val(p.input)
+	p.advance()
 	p.skipWhitespace()
 
 	// Collect value tokens until newline, skipping comments
@@ -523,14 +572,27 @@ func (p *preprocessor) handleDefine() {
 		valueTokens = valueTokens[:len(valueTokens)-1]
 	}
 
-	if _, exists := p.macros[name]; exists {
+	if _, exists := macros[name]; exists {
 		p.warn("macro redefined", int(defineTok.line), name)
 	}
-	p.macros[name] = valueTokens
+	macros[name] = valueTokens
+}
+
+func (p *preprocessor) lookupMacro(tok token) (expansion []token, ok bool) {
+	switch tok.typ {
+	case tokIdent:
+		expansion, ok = p.bareMacros[tok.val(p.input)]
+	case tokMacroRef:
+		name := tok.macroName(p.input)
+		if expansion, ok = p.bracedMacros[name]; !ok {
+			expansion, ok = p.bareMacros[name]
+		}
+	}
+	return expansion, ok
 }
 
 func (p *preprocessor) expandMacros(tokens []token) ([]token, bool) {
-	if len(p.macros) == 0 {
+	if len(p.bareMacros) == 0 && len(p.bracedMacros) == 0 {
 		return tokens, true
 	}
 
@@ -540,15 +602,13 @@ func (p *preprocessor) expandMacros(tokens []token) ([]token, bool) {
 		changed := false
 
 		for _, tok := range src {
-			if tok.typ == tokIdent {
-				if expansion, ok := p.macros[tok.val(p.input)]; ok {
-					dst = append(dst, expansion...)
-					changed = true
-					if len(dst) > MaxMacroExpansionTokens {
-						return nil, false
-					}
-					continue
+			if expansion, ok := p.lookupMacro(tok); ok {
+				dst = append(dst, expansion...)
+				changed = true
+				if len(dst) > MaxMacroExpansionTokens {
+					return nil, false
 				}
+				continue
 			}
 			dst = append(dst, tok)
 		}

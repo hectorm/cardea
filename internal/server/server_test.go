@@ -2474,7 +2474,15 @@ func TestBastionSSHServer(t *testing.T) {
 				#define T50_TEAM T50_SUBTEAM_A | T50_SUBTEAM_B
 				permitconnect="*@nested-team.example.com:22" T50_TEAM
 
-				# [T51] Multiple declarations of same option type
+				# [T51] Braced macro expands at its reference, stays literal when written bare
+				#define {{T51_NAME}} expanded.example.com
+				permitconnect="*@{{T51_NAME}}:22" ALICE_KEY T51_NAME
+
+				# [T52] Bare macro also expands at a braced reference
+				#define T52_NAME expanded
+				permitconnect="*@{{T52_NAME}}.example.com:22" ALICE_KEY {{T52_NAME}}suffix
+
+				# [T53] Multiple declarations of same option type
 				permitconnect="*@multi-decl-1.example.com:22",permitconnect="*@multi-decl-2.example.com:22",\
 				permitopen="*:80",permitopen="*:443",\
 				permitlisten="localhost:8080",permitlisten="localhost:9090",\
@@ -2492,13 +2500,13 @@ func TestBastionSSHServer(t *testing.T) {
 				no-recording,recording \
 				ALICE_KEY
 
-				# [T52] Restrict
+				# [T54] Restrict
 				restrict,permitconnect="*@restrict.example.com:22" ALICE_KEY
 
-				# [T53] Restrict with pty and port-forwarding overrides
+				# [T55] Restrict with pty and port-forwarding overrides
 				restrict,pty,port-forwarding,permitconnect="*@restrict-override.example.com:22" BOB_KEY
 
-				# [T54] Key comment
+				# [T56] Key comment
 				permitconnect="*@comment.example.com:22" ALICE_KEY alice@laptop
 				`, aliceKeyAuth, bobKeyAuth, carolKeyAuth),
 				expected: map[string][]*authkeys.AuthorizedKeyOptions{
@@ -2691,6 +2699,18 @@ func TestBastionSSHServer(t *testing.T) {
 						},
 						// [T51]
 						{
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "expanded.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
+							Comment:        "T51_NAME",
+						},
+						// [T52]
+						{
+							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "expanded.example.com", Port: "22"}},
+							PermitOpens:    defaultPermitOpens,
+							Comment:        "expandedsuffix",
+						},
+						// [T53]
+						{
 							PermitConnects: []authkeys.PermitConnect{
 								{User: "*", Host: "multi-decl-1.example.com", Port: "22"},
 								{User: "*", Host: "multi-decl-2.example.com", Port: "22"},
@@ -2728,7 +2748,7 @@ func TestBastionSSHServer(t *testing.T) {
 							NoPty:              false,
 							NoRecording:        false,
 						},
-						// [T52]
+						// [T54]
 						{
 							PermitConnects:     []authkeys.PermitConnect{{User: "*", Host: "restrict.example.com", Port: "22"}},
 							PermitOpens:        defaultPermitOpens,
@@ -2736,7 +2756,7 @@ func TestBastionSSHServer(t *testing.T) {
 							NoSocketForwarding: true,
 							NoPty:              true,
 						},
-						// [T54]
+						// [T56]
 						{
 							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "comment.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
@@ -2832,7 +2852,7 @@ func TestBastionSSHServer(t *testing.T) {
 							PermitConnects: []authkeys.PermitConnect{{User: "*", Host: "nested-team.example.com", Port: "22"}},
 							PermitOpens:    defaultPermitOpens,
 						},
-						// [T53]
+						// [T55]
 						{
 							PermitConnects:     []authkeys.PermitConnect{{User: "*", Host: "restrict-override.example.com", Port: "22"}},
 							PermitOpens:        defaultPermitOpens,
