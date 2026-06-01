@@ -58,6 +58,7 @@ func TestAuthkeysMatchers(t *testing.T) {
 			{name: "cidr_ipv6", pattern: "2001:db8::/32", host: "2001:db8::1", want: true},
 			{name: "cidr_no_match", pattern: "10.0.0.0/8", host: "11.1.2.3", want: false},
 			{name: "cidr_non_ip", pattern: "10.0.0.0/8", host: "api.example.com", want: false},
+			{name: "cidr_invalid_prefix", pattern: "10.0.0.0/99", host: "10.0.0.1", want: false},
 			{name: "too_long", pattern: "*", host: strings.Repeat("a", 256), want: false},
 		}
 
@@ -80,9 +81,17 @@ func TestAuthkeysMatchers(t *testing.T) {
 			{name: "exact", pattern: "22", port: "22", want: true},
 			{name: "wildcard", pattern: "*", port: "22", want: true},
 			{name: "range", pattern: "1024-2048", port: "2048", want: true},
+			{name: "numeric_int", pattern: "22", port: 22, want: true},
+			{name: "numeric_int64", pattern: "22", port: int64(22), want: true},
+			{name: "numeric_uint16", pattern: "22", port: uint16(22), want: true},
+			{name: "numeric_uint32", pattern: "22", port: uint32(22), want: true},
+			{name: "numeric_uint64", pattern: "22", port: uint64(22), want: true},
 			{name: "invalid_target", pattern: "*", port: "abc", want: false},
 			{name: "out_of_range", pattern: "*", port: "65536", want: false},
 			{name: "invalid_range", pattern: "2000-1000", port: "1500", want: false},
+			{name: "numeric_negative_int", pattern: "*", port: -1, want: false},
+			{name: "numeric_out_of_range", pattern: "*", port: uint32(70000), want: false},
+			{name: "unsupported_type", pattern: "*", port: true, want: false},
 		}
 
 		for _, tt := range tests {
