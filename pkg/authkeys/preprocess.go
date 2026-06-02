@@ -26,6 +26,7 @@ const (
 	tokComment
 	tokDefine
 	tokMacroRef
+	tokEscapedMacroRef
 )
 
 type token struct {
@@ -155,6 +156,12 @@ func (l *lexer) scanToken() {
 			l.bol = true
 			return
 		}
+	}
+
+	// Escaped macro reference \{{NAME}}
+	if l.scanEscapedMacroRef() {
+		l.bol = false
+		return
 	}
 
 	// Newline
@@ -309,6 +316,27 @@ func (l *lexer) scanMacroRef() bool {
 	return true
 }
 
+func (l *lexer) scanEscapedMacroRef() bool {
+	if l.peek() != '\\' || l.peekAt(1) != '{' || l.peekAt(2) != '{' {
+		return false
+	}
+	off := uint32(3)
+	if !isNameStart(l.peekAt(off)) {
+		return false
+	}
+	off++
+	for isNameCont(l.peekAt(off)) {
+		off++
+	}
+	if l.peekAt(off) != '}' || l.peekAt(off+1) != '}' {
+		return false
+	}
+	end := l.pos + off + 2
+	l.emit(tokEscapedMacroRef, l.pos, end)
+	l.pos = end
+	return true
+}
+
 func (l *lexer) scanQuoted() bool {
 	if l.peek() != '"' {
 		return false
@@ -326,6 +354,11 @@ func (l *lexer) scanQuotedInner() {
 	if c == '\\' && l.peekAt(1) == '"' {
 		l.emit(tokOther, l.pos, l.pos+2)
 		l.pos += 2
+		return
+	}
+
+	// Escaped macro reference \{{NAME}} inside quote
+	if l.scanEscapedMacroRef() {
 		return
 	}
 
@@ -528,7 +561,11 @@ func (p *preprocessor) trimmedLen(tokens []token) int {
 	}
 	n := 0
 	for _, tok := range tokens[start:end] {
-		n += int(tok.end - tok.start)
+		if tok.typ == tokEscapedMacroRef {
+			n += int(tok.end - tok.start - 1)
+		} else {
+			n += int(tok.end - tok.start)
+		}
 	}
 	return n
 }
@@ -631,12 +668,15 @@ func (p *preprocessor) splitByPipe(tokens []token) [][]byte {
 	segStart := 0
 
 	for _, tok := range tokens {
-		if tok.typ == tokPipe {
+		switch tok.typ {
+		case tokPipe:
 			if seg := bytes.TrimSpace(p.segBuf.Bytes()[segStart:p.segBuf.Len()]); len(seg) > 0 {
 				segments = append(segments, bytes.Clone(seg))
 			}
 			segStart = p.segBuf.Len()
-		} else {
+		case tokEscapedMacroRef:
+			p.segBuf.WriteString(p.input[tok.start+1 : tok.end])
+		default:
 			p.segBuf.WriteString(p.input[tok.start:tok.end])
 		}
 	}

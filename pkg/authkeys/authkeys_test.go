@@ -353,6 +353,45 @@ func TestAuthkeys(t *testing.T) {
 					},
 				},
 				{
+					name: "macro_escaped_comment",
+					content: fmt.Sprintf(`
+					#define {{BRACED_NAME}} expanded.example.com
+					permitconnect="*@comment-escape.example.com:22" %s \{{BRACED_NAME}}
+					`, aliceKeyAuth),
+					want: map[string][]*AuthorizedKeyOptions{
+						aliceKeyMarshal: {{PermitConnects: []PermitConnect{{User: "*", Host: "comment-escape.example.com", Port: "22"}}, PermitOpens: defaultPermitOpens, Comment: "{{BRACED_NAME}}"}},
+					},
+				},
+				{
+					name: "macro_escaped_command",
+					content: fmt.Sprintf(`
+					#define {{BRACED_NAME}} expanded.example.com
+					permitconnect="*@command-escape.example.com:22",command="\{{BRACED_NAME}}" %s
+					`, aliceKeyAuth),
+					want: map[string][]*AuthorizedKeyOptions{
+						aliceKeyMarshal: {{PermitConnects: []PermitConnect{{User: "*", Host: "command-escape.example.com", Port: "22"}}, PermitOpens: defaultPermitOpens, Command: "{{BRACED_NAME}}"}},
+					},
+				},
+				{
+					name: "macro_escaped_invalid_stays_literal",
+					content: fmt.Sprintf(`
+					#define {{BRACED_NAME}} expanded.example.com
+					permitconnect="*@invalid-escape.example.com:22" %s \{{123}}
+					`, aliceKeyAuth),
+					want: map[string][]*AuthorizedKeyOptions{
+						aliceKeyMarshal: {{PermitConnects: []PermitConnect{{User: "*", Host: "invalid-escape.example.com", Port: "22"}}, PermitOpens: defaultPermitOpens, Comment: "\\{{123}}"}},
+					},
+				},
+				{
+					name: "macro_escaped_unterminated_stays_literal",
+					content: fmt.Sprintf(`
+					permitconnect="*@unterminated-escape.example.com:22" %s \{{NOPE
+					`, aliceKeyAuth),
+					want: map[string][]*AuthorizedKeyOptions{
+						aliceKeyMarshal: {{PermitConnects: []PermitConnect{{User: "*", Host: "unterminated-escape.example.com", Port: "22"}}, PermitOpens: defaultPermitOpens, Comment: "\\{{NOPE"}},
+					},
+				},
+				{
 					name: "pipe_consecutive_continuations",
 					content: fmt.Sprintf(`
 					permitconnect="*@pipe-continuation.example.com:22" %s \
