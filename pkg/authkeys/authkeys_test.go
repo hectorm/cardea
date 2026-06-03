@@ -1191,28 +1191,6 @@ func TestAuthkeys(t *testing.T) {
 		})
 	})
 
-	t.Run("quote_option_value", func(t *testing.T) {
-		tests := []struct {
-			name  string
-			input string
-			want  string
-		}{
-			{name: "simple", input: "hello", want: `"hello"`},
-			{name: "empty", input: "", want: `""`},
-			{name: "with_quote", input: `say "hi"`, want: `"say \"hi\""`},
-			{name: "with_backslash", input: `C:\path`, want: `"C:\path"`},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				got := QuoteOptionValue(tt.input)
-				if got != tt.want {
-					t.Errorf("got %q, want %q", got, tt.want)
-				}
-			})
-		}
-	})
-
 	t.Run("parse_permit_connect", func(t *testing.T) {
 		t.Run("valid", func(t *testing.T) {
 			tests := []struct {

@@ -294,21 +294,6 @@ func SplitOption(s string) (name, value string, ok bool) {
 	return "", "", false // no closing quote
 }
 
-func QuoteOptionValue(s string) string {
-	var b strings.Builder
-	b.Grow(len(s) + 2)
-	b.WriteByte('"')
-	for i := range len(s) {
-		if s[i] == '"' {
-			b.WriteString(`\"`)
-		} else {
-			b.WriteByte(s[i])
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
-}
-
 func ParsePermitConnect(s string) (PermitConnect, error) {
 	if s != "" && len(s) <= MaxPermitConnectLength {
 		canonicalizeHost := func(host string) (string, bool) {
