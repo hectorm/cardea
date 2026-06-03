@@ -438,9 +438,14 @@ type preprocessor struct {
 }
 
 type preprocessedLine struct {
-	segments [][]byte
-	line     int
-	raw      string
+	segments  [][]byte
+	line      int
+	rawInput  string
+	rawTokens []token
+}
+
+func (l preprocessedLine) rawContext() string {
+	return joinTokenText(l.rawInput, l.rawTokens)
 }
 
 func preprocess(content string, onLine func(preprocessedLine), onWarning func(Warning)) {
@@ -541,9 +546,10 @@ func (p *preprocessor) handleNewline() {
 			p.warn("expanded line exceeds maximum length", int(newlineTok.line), p.joinTokens(p.currentLine))
 		} else if segments := p.splitByPipe(expanded); len(segments) > 0 {
 			p.onLine(preprocessedLine{
-				segments: segments,
-				line:     int(newlineTok.line),
-				raw:      p.joinTokens(p.currentLine),
+				segments:  segments,
+				line:      int(newlineTok.line),
+				rawInput:  p.input,
+				rawTokens: p.currentLine,
 			})
 		}
 	}
@@ -689,6 +695,10 @@ func (p *preprocessor) splitByPipe(tokens []token) [][]byte {
 }
 
 func (p *preprocessor) joinTokens(tokens []token) string {
+	return joinTokenText(p.input, tokens)
+}
+
+func joinTokenText(input string, tokens []token) string {
 	if len(tokens) == 0 {
 		return ""
 	}
@@ -699,7 +709,7 @@ func (p *preprocessor) joinTokens(tokens []token) string {
 	}
 	sb.Grow(size)
 	for _, tok := range tokens {
-		sb.WriteString(p.input[tok.start:tok.end])
+		sb.WriteString(input[tok.start:tok.end])
 	}
 	return strings.TrimSpace(sb.String())
 }

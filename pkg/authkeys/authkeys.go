@@ -76,7 +76,7 @@ func ParseFile(content []byte) (map[string][]*AuthorizedKeyOptions, []Warning, e
 	preprocess(string(content), func(line preprocessedLine) {
 		baseOpts, publicKey, err := ParseLine(line.segments[0])
 		if err != nil {
-			warnings = append(warnings, Warning{Message: err.Error(), Line: line.line, Context: line.raw})
+			warnings = append(warnings, Warning{Message: err.Error(), Line: line.line, Context: line.rawContext()})
 			return
 		}
 		type keyEntry struct {
@@ -88,11 +88,11 @@ func ParseFile(content []byte) (map[string][]*AuthorizedKeyOptions, []Warning, e
 		for _, seg := range line.segments[1:] {
 			publicKey, comment, extraOpts, err := ParseKey(seg)
 			if err != nil {
-				warnings = append(warnings, Warning{Message: err.Error(), Line: line.line, Context: line.raw})
+				warnings = append(warnings, Warning{Message: err.Error(), Line: line.line, Context: line.rawContext()})
 				return
 			}
 			if len(extraOpts) > 0 {
-				warnings = append(warnings, Warning{Message: "unexpected options", Line: line.line, Context: line.raw})
+				warnings = append(warnings, Warning{Message: "unexpected options", Line: line.line, Context: line.rawContext()})
 				return
 			}
 			keys = append(keys, keyEntry{string(publicKey.Marshal()), comment})
