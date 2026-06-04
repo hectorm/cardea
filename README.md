@@ -139,6 +139,10 @@ Download from the [releases page](https://github.com/hectorm/cardea/releases). B
       path to the banner file; disabled if empty (env CARDEA_BANNER_FILE)
 -connections-max int
       maximum number of concurrent connections; 0 for unlimited (env CARDEA_CONNECTIONS_MAX) (default 1000)
+-sessions-max int
+      maximum number of concurrent session channels per connection; 0 for unlimited (env CARDEA_SESSIONS_MAX) (default 10)
+-forwards-max int
+      maximum number of concurrent forwarding channels per connection; 0 for unlimited (env CARDEA_FORWARDS_MAX) (default 1024)
 -rate-limit-max int
       maximum number of unauthenticated requests per IP address; 0 for unlimited (env CARDEA_RATE_LIMIT_MAX) (default 10)
 -rate-limit-time duration

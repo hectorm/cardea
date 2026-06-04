@@ -1658,6 +1658,11 @@ func TestBastionSSHServer(t *testing.T) {
 			return
 		}
 
+		if count := bastionSrv.Metrics().ConnectionRejectionsTotal.Load(); count != 1 {
+			t.Errorf("expected cardea_connection_rejections_total 1, got %d", count)
+			return
+		}
+
 		_ = bastionConn.Close()
 
 		if err := waitFor(2*time.Second, func() error {
@@ -1669,7 +1674,140 @@ func TestBastionSSHServer(t *testing.T) {
 			t.Error(err)
 			return
 		}
+	})
 
+	t.Run("sessions_max", func(t *testing.T) {
+		cli, cliPublicKey, err := setupClient(t)
+		if err != nil {
+			t.Errorf("failed to setup client: %v", err)
+			return
+		}
+		cli.User = fmt.Sprintf("alice@%s", mockAddr)
+		cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
+
+		bastionSrv, err := setupBastionServer(t,
+			fmt.Sprintf(`permitconnect="alice@%s" %s`, mockAddr, cliAuthorizedKeyStr),
+			fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+			func(srv *Server) error {
+				srv.config.SessionsMax = 1
+				return nil
+			},
+		)
+		if err != nil {
+			t.Errorf("failed to setup bastion server: %v", err)
+			return
+		}
+
+		bastionConn, err := connectToServer(t, cli, bastionSrv)
+		if err != nil {
+			t.Errorf("expected connection to succeed, but got error: %v", err)
+			return
+		}
+
+		session, err := bastionConn.NewSession()
+		if err != nil {
+			t.Errorf("expected first session to succeed, but got error: %v", err)
+			return
+		}
+
+		_, err = bastionConn.NewSession()
+		if err == nil {
+			t.Error("expected second session to fail, but it succeeded")
+			return
+		}
+
+		if count := bastionSrv.Metrics().SessionRejectionsTotal.Load(); count != 1 {
+			t.Errorf("expected cardea_session_rejections_total 1, got %d", count)
+			return
+		}
+
+		_ = session.Close()
+
+		if err := waitFor(2*time.Second, func() error {
+			session, err := bastionConn.NewSession()
+			if err != nil {
+				return fmt.Errorf("expected third session to succeed, but got error: %w", err)
+			}
+			_ = session.Close()
+			return nil
+		}); err != nil {
+			t.Error(err)
+			return
+		}
+	})
+
+	t.Run("forwards_max", func(t *testing.T) {
+		cli, cliPublicKey, err := setupClient(t)
+		if err != nil {
+			t.Errorf("failed to setup client: %v", err)
+			return
+		}
+		cli.User = fmt.Sprintf("alice@%s", mockAddr)
+		cliAuthorizedKeyStr := marshalAuthorizedKey(cliPublicKey)
+
+		bastionSrv, err := setupBastionServer(t,
+			fmt.Sprintf(`permitconnect="alice@%s",permitopen="*:*" %s`, mockAddr, cliAuthorizedKeyStr),
+			fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+			func(srv *Server) error {
+				srv.config.ForwardsMax = 1
+				return nil
+			},
+		)
+		if err != nil {
+			t.Errorf("failed to setup bastion server: %v", err)
+			return
+		}
+
+		bastionConn, err := connectToServer(t, cli, bastionSrv)
+		if err != nil {
+			t.Errorf("expected connection to succeed, but got error: %v", err)
+			return
+		}
+
+		payload := struct {
+			HostToConnect  string
+			PortToConnect  uint32
+			OriginatorIP   string
+			OriginatorPort uint32
+		}{
+			HostToConnect:  "127.0.0.1",
+			PortToConnect:  7,
+			OriginatorIP:   "127.0.0.1",
+			OriginatorPort: 12345,
+		}
+
+		channel, requests, err := bastionConn.OpenChannel("direct-tcpip", ssh.Marshal(payload))
+		if err != nil {
+			t.Errorf("expected first forward to succeed, but got error: %v", err)
+			return
+		}
+		go ssh.DiscardRequests(requests)
+
+		_, _, err = bastionConn.OpenChannel("direct-tcpip", ssh.Marshal(payload))
+		if err == nil {
+			t.Error("expected second forward to fail, but it succeeded")
+			return
+		}
+
+		if count := bastionSrv.Metrics().ForwardRejectionsTotal.Load(); count != 1 {
+			t.Errorf("expected cardea_forward_rejections_total 1, got %d", count)
+			return
+		}
+
+		_ = channel.Close()
+
+		if err := waitFor(2*time.Second, func() error {
+			channel, requests, err := bastionConn.OpenChannel("direct-tcpip", ssh.Marshal(payload))
+			if err != nil {
+				return fmt.Errorf("expected third forward to succeed, but got error: %w", err)
+			}
+			go ssh.DiscardRequests(requests)
+			_ = channel.Close()
+			return nil
+		}); err != nil {
+			t.Error(err)
+			return
+		}
 	})
 
 	t.Run("rate_limit", func(t *testing.T) {
@@ -3751,8 +3889,10 @@ func TestBastionSSHServer(t *testing.T) {
 					"cardea_start_time_seconds",
 					"cardea_connections_active",
 					"cardea_connections_total",
+					"cardea_connection_rejections_total",
 					"cardea_sessions_active",
 					"cardea_sessions_total",
+					"cardea_session_rejections_total",
 					"cardea_port_forwards_local_active",
 					"cardea_port_forwards_local_total",
 					"cardea_port_forwards_remote_active",
@@ -3761,6 +3901,7 @@ func TestBastionSSHServer(t *testing.T) {
 					"cardea_socket_forwards_local_total",
 					"cardea_socket_forwards_remote_active",
 					"cardea_socket_forwards_remote_total",
+					"cardea_forward_rejections_total",
 					"cardea_received_bytes_total",
 					"cardea_sent_bytes_total",
 					"cardea_auth_successes_total",

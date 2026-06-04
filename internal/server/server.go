@@ -398,7 +398,8 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 		srv.connNum.Add(-1)
 		srv.metrics.ConnectionsActive.Add(-1)
 	}()
-	if connNum > int64(srv.config.ConnectionsMax) && srv.config.ConnectionsMax > 0 {
+	if srv.config.ConnectionsMax > 0 && connNum > int64(srv.config.ConnectionsMax) {
+		srv.metrics.ConnectionRejectionsTotal.Add(1)
 		return fmt.Errorf("max connections reached")
 	}
 
@@ -447,22 +448,20 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 	}
 	defer func() { _ = backendConn.Close() }()
 
+	var sessionCount, forwardCount atomic.Int64
+
 	// Handle global requests
 	go func() {
 		for req := range requests {
 			switch req.Type {
 			case "tcpip-forward", "cancel-tcpip-forward":
-				go func() {
-					if err := srv.handleTCPIPForward(backendConn, authConn.pubKeyOpts, req); err != nil {
-						slog.Error("tcpip-forward error", "error", err)
-					}
-				}()
+				if err := srv.handleTCPIPForward(backendConn, authConn.pubKeyOpts, req); err != nil {
+					slog.Error("tcpip-forward error", "error", err)
+				}
 			case "streamlocal-forward@openssh.com", "cancel-streamlocal-forward@openssh.com":
-				go func() {
-					if err := srv.handleStreamLocalForward(backendConn, authConn.pubKeyOpts, req); err != nil {
-						slog.Error("streamlocal-forward error", "error", err)
-					}
-				}()
+				if err := srv.handleStreamLocalForward(backendConn, authConn.pubKeyOpts, req); err != nil {
+					slog.Error("streamlocal-forward error", "error", err)
+				}
 			case "keepalive@openssh.com":
 				if req.WantReply {
 					_ = req.Reply(false, nil)
@@ -481,19 +480,43 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 		for newChannel := range channels {
 			switch newChannel.ChannelType() {
 			case "session":
+				if n := sessionCount.Add(1); srv.config.SessionsMax > 0 && n > int64(srv.config.SessionsMax) {
+					sessionCount.Add(-1)
+					srv.metrics.SessionRejectionsTotal.Add(1)
+					slog.Debug("rejecting session channel, per-connection limit reached", "limit", srv.config.SessionsMax)
+					_ = newChannel.Reject(ssh.ResourceShortage, "too many concurrent sessions")
+					continue
+				}
 				go func() {
+					defer sessionCount.Add(-1)
 					if err := srv.handleSession(frontendConn, backendConn, authConn, newChannel); err != nil {
 						slog.Error("session error", "error", err)
 					}
 				}()
 			case "direct-tcpip":
+				if n := forwardCount.Add(1); srv.config.ForwardsMax > 0 && n > int64(srv.config.ForwardsMax) {
+					forwardCount.Add(-1)
+					srv.metrics.ForwardRejectionsTotal.Add(1)
+					slog.Debug("rejecting direct-tcpip channel, per-connection limit reached", "limit", srv.config.ForwardsMax)
+					_ = newChannel.Reject(ssh.ResourceShortage, "too many concurrent forwards")
+					continue
+				}
 				go func() {
+					defer forwardCount.Add(-1)
 					if err := srv.handleDirectTCPIP(backendConn, authConn.pubKeyOpts, newChannel); err != nil {
 						slog.Error("direct-tcpip error", "error", err)
 					}
 				}()
 			case "direct-streamlocal@openssh.com":
+				if n := forwardCount.Add(1); srv.config.ForwardsMax > 0 && n > int64(srv.config.ForwardsMax) {
+					forwardCount.Add(-1)
+					srv.metrics.ForwardRejectionsTotal.Add(1)
+					slog.Debug("rejecting direct-streamlocal channel, per-connection limit reached", "limit", srv.config.ForwardsMax)
+					_ = newChannel.Reject(ssh.ResourceShortage, "too many concurrent forwards")
+					continue
+				}
 				go func() {
+					defer forwardCount.Add(-1)
 					if err := srv.handleDirectStreamLocal(backendConn, authConn.pubKeyOpts, newChannel); err != nil {
 						slog.Error("direct-streamlocal error", "error", err)
 					}
@@ -516,7 +539,15 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 					forwardedTCPIP = nil
 					continue
 				}
+				if n := forwardCount.Add(1); srv.config.ForwardsMax > 0 && n > int64(srv.config.ForwardsMax) {
+					forwardCount.Add(-1)
+					srv.metrics.ForwardRejectionsTotal.Add(1)
+					slog.Debug("rejecting forwarded-tcpip channel, per-connection limit reached", "limit", srv.config.ForwardsMax)
+					_ = newChannel.Reject(ssh.ResourceShortage, "too many concurrent forwards")
+					continue
+				}
 				go func() {
+					defer forwardCount.Add(-1)
 					if err := srv.handleForwardedTCPIP(frontendConn, authConn.pubKeyOpts, newChannel); err != nil {
 						slog.Error("forwarded-tcpip error", "error", err)
 					}
@@ -526,7 +557,15 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 					forwardedStreamLocal = nil
 					continue
 				}
+				if n := forwardCount.Add(1); srv.config.ForwardsMax > 0 && n > int64(srv.config.ForwardsMax) {
+					forwardCount.Add(-1)
+					srv.metrics.ForwardRejectionsTotal.Add(1)
+					slog.Debug("rejecting forwarded-streamlocal channel, per-connection limit reached", "limit", srv.config.ForwardsMax)
+					_ = newChannel.Reject(ssh.ResourceShortage, "too many concurrent forwards")
+					continue
+				}
 				go func() {
+					defer forwardCount.Add(-1)
 					if err := srv.handleForwardedStreamLocal(frontendConn, authConn.pubKeyOpts, newChannel); err != nil {
 						slog.Error("forwarded-streamlocal error", "error", err)
 					}

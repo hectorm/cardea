@@ -17,8 +17,10 @@ type Metrics struct {
 	NodeID                              string
 	ConnectionsActive                   atomic.Int64
 	ConnectionsTotal                    atomic.Uint64
+	ConnectionRejectionsTotal           atomic.Uint64
 	SessionsActive                      atomic.Int64
 	SessionsTotal                       atomic.Uint64
+	SessionRejectionsTotal              atomic.Uint64
 	PortForwardsLocalActive             atomic.Int64
 	PortForwardsLocalTotal              atomic.Uint64
 	PortForwardsRemoteActive            atomic.Int64
@@ -27,6 +29,7 @@ type Metrics struct {
 	SocketForwardsLocalTotal            atomic.Uint64
 	SocketForwardsRemoteActive          atomic.Int64
 	SocketForwardsRemoteTotal           atomic.Uint64
+	ForwardRejectionsTotal              atomic.Uint64
 	ReceivedBytesTotal                  atomic.Uint64
 	SentBytesTotal                      atomic.Uint64
 	AuthSuccessesTotal                  atomic.Uint64
@@ -191,6 +194,10 @@ func (m *Metrics) writeCardeaMetrics(ew *errWriter) {
 	ew.printf("# HELP cardea_connections_total Total number of connections.\n")
 	ew.printf("cardea_connections_total %d\n", m.ConnectionsTotal.Load())
 
+	ew.printf("# TYPE cardea_connection_rejections_total counter\n")
+	ew.printf("# HELP cardea_connection_rejections_total Total number of connections rejected because the connection limit was reached.\n")
+	ew.printf("cardea_connection_rejections_total %d\n", m.ConnectionRejectionsTotal.Load())
+
 	ew.printf("# TYPE cardea_sessions_active gauge\n")
 	ew.printf("# HELP cardea_sessions_active Current number of active sessions.\n")
 	ew.printf("cardea_sessions_active %d\n", m.SessionsActive.Load())
@@ -198,6 +205,10 @@ func (m *Metrics) writeCardeaMetrics(ew *errWriter) {
 	ew.printf("# TYPE cardea_sessions_total counter\n")
 	ew.printf("# HELP cardea_sessions_total Total number of sessions.\n")
 	ew.printf("cardea_sessions_total %d\n", m.SessionsTotal.Load())
+
+	ew.printf("# TYPE cardea_session_rejections_total counter\n")
+	ew.printf("# HELP cardea_session_rejections_total Total number of session channels rejected because the per-connection session limit was reached.\n")
+	ew.printf("cardea_session_rejections_total %d\n", m.SessionRejectionsTotal.Load())
 
 	ew.printf("# TYPE cardea_port_forwards_local_active gauge\n")
 	ew.printf("# HELP cardea_port_forwards_local_active Current number of active local port forwards.\n")
@@ -230,6 +241,10 @@ func (m *Metrics) writeCardeaMetrics(ew *errWriter) {
 	ew.printf("# TYPE cardea_socket_forwards_remote_total counter\n")
 	ew.printf("# HELP cardea_socket_forwards_remote_total Total number of remote socket forwards.\n")
 	ew.printf("cardea_socket_forwards_remote_total %d\n", m.SocketForwardsRemoteTotal.Load())
+
+	ew.printf("# TYPE cardea_forward_rejections_total counter\n")
+	ew.printf("# HELP cardea_forward_rejections_total Total number of forwarding channels rejected because the per-connection forwarding limit was reached.\n")
+	ew.printf("cardea_forward_rejections_total %d\n", m.ForwardRejectionsTotal.Load())
 
 	ew.printf("# TYPE cardea_received_bytes_total counter\n")
 	ew.printf("# HELP cardea_received_bytes_total Total bytes received from clients.\n")

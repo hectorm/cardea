@@ -34,6 +34,8 @@ type Config struct {
 	UnknownHostsPolicy       string
 	BannerFile               string
 	ConnectionsMax           int
+	SessionsMax              int
+	ForwardsMax              int
 	RateLimitMax             int
 	RateLimitTime            time.Duration
 	RecordingsDir            string
@@ -189,6 +191,20 @@ func NewConfig() *Config {
 		"connections-max",
 		env.IntEnv(1000, "CARDEA_CONNECTIONS_MAX"),
 		"maximum number of concurrent connections; 0 for unlimited (env CARDEA_CONNECTIONS_MAX)",
+	)
+
+	flag.IntVar(
+		&config.SessionsMax,
+		"sessions-max",
+		env.IntEnv(10, "CARDEA_SESSIONS_MAX"),
+		"maximum number of concurrent session channels per connection; 0 for unlimited (env CARDEA_SESSIONS_MAX)",
+	)
+
+	flag.IntVar(
+		&config.ForwardsMax,
+		"forwards-max",
+		env.IntEnv(1024, "CARDEA_FORWARDS_MAX"),
+		"maximum number of concurrent forwarding channels per connection; 0 for unlimited (env CARDEA_FORWARDS_MAX)",
 	)
 
 	flag.IntVar(
