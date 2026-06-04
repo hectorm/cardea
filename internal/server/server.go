@@ -1261,7 +1261,7 @@ func (srv *Server) relayChannels(ch1, ch2 ssh.Channel, activeMetric *atomic.Int6
 
 	relay := func(dst, src ssh.Channel) {
 		defer wg.Done()
-		defer func() { _ = dst.Close() }()
+		defer func() { _ = dst.CloseWrite() }()
 		buf := bufferPool.Get()
 		defer bufferPool.Put(buf)
 		_, _ = io.CopyBuffer(dst, src, buf.([]byte))
