@@ -146,7 +146,7 @@ func ParseOptions(opts []string) (*AuthorizedKeyOptions, error) {
 		switch name {
 		case "permitconnect":
 			for v := range strings.SplitSeq(val, ",") {
-				permitconnect, err := ParsePermitConnect(strings.TrimSpace(v))
+				permitconnect, err := ParsePermitConnect(v)
 				if err != nil {
 					return nil, fmt.Errorf("invalid permitconnect: %w", err)
 				}
@@ -154,7 +154,7 @@ func ParseOptions(opts []string) (*AuthorizedKeyOptions, error) {
 			}
 		case "permitopen":
 			for v := range strings.SplitSeq(val, ",") {
-				permitopen, err := ParsePermitTCP(strings.TrimSpace(v))
+				permitopen, err := ParsePermitTCP(v)
 				if err != nil {
 					return nil, fmt.Errorf("invalid permitopen: %w", err)
 				}
@@ -162,20 +162,20 @@ func ParseOptions(opts []string) (*AuthorizedKeyOptions, error) {
 			}
 		case "permitlisten":
 			for v := range strings.SplitSeq(val, ",") {
-				permitlisten, err := ParsePermitTCP(strings.TrimSpace(v))
+				permitlisten, err := ParsePermitTCP(v)
 				if err != nil {
 					return nil, fmt.Errorf("invalid permitlisten: %w", err)
 				}
 				authKeyOpts.PermitListens = append(authKeyOpts.PermitListens, permitlisten)
 			}
 		case "permitsocketopen":
-			permitsocketopen, err := ParsePermitSocket(strings.TrimSpace(val))
+			permitsocketopen, err := ParsePermitSocket(val)
 			if err != nil {
 				return nil, fmt.Errorf("invalid permitsocketopen: %w", err)
 			}
 			authKeyOpts.PermitSocketOpens = append(authKeyOpts.PermitSocketOpens, permitsocketopen)
 		case "permitsocketlisten":
-			permitsocketlisten, err := ParsePermitSocket(strings.TrimSpace(val))
+			permitsocketlisten, err := ParsePermitSocket(val)
 			if err != nil {
 				return nil, fmt.Errorf("invalid permitsocketlisten: %w", err)
 			}
@@ -188,7 +188,7 @@ func ParseOptions(opts []string) (*AuthorizedKeyOptions, error) {
 			authKeyOpts.Environments = append(authKeyOpts.Environments, environment)
 		case "from":
 			for v := range strings.SplitSeq(val, ",") {
-				from, err := ParseFrom(strings.TrimSpace(v))
+				from, err := ParseFrom(v)
 				if err != nil {
 					return nil, fmt.Errorf("invalid from: %w", err)
 				}
@@ -295,6 +295,7 @@ func SplitOption(s string) (name, value string, ok bool) {
 }
 
 func ParsePermitConnect(s string) (PermitConnect, error) {
+	s = strings.TrimSpace(s)
 	if s != "" && len(s) <= MaxPermitConnectLength {
 		canonicalizeHost := func(host string) (string, bool) {
 			if ip := net.ParseIP(host); ip != nil {
@@ -350,6 +351,7 @@ func ParsePermitConnect(s string) (PermitConnect, error) {
 }
 
 func ParsePermitTCP(s string) (PermitTCP, error) {
+	s = strings.TrimSpace(s)
 	if s == "" {
 		return PermitTCP{}, fmt.Errorf("empty value")
 	}
@@ -366,6 +368,7 @@ func ParsePermitTCP(s string) (PermitTCP, error) {
 }
 
 func ParsePermitSocket(s string) (PermitSocket, error) {
+	s = strings.TrimSpace(s)
 	if s == "" {
 		return PermitSocket{}, fmt.Errorf("empty value")
 	}
@@ -414,6 +417,7 @@ func ParseEnvironment(s string) (Environment, error) {
 }
 
 func ParseFrom(s string) (string, error) {
+	s = strings.TrimSpace(s)
 	if s == "" {
 		return "", fmt.Errorf("empty value")
 	}
@@ -422,6 +426,7 @@ func ParseFrom(s string) (string, error) {
 }
 
 func ParseTimespec(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
 	if s == "" {
 		return time.Time{}, fmt.Errorf("empty timespec")
 	}
