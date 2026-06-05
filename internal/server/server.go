@@ -984,20 +984,22 @@ func (srv *Server) handleDirectTCPIP(backendConn *ssh.Client, authKeyOpts *authk
 		return nil
 	}
 
-	backendChannel, requests, err := backendConn.OpenChannel("direct-tcpip", newChannel.ExtraData())
+	backendChannel, backendRequests, err := backendConn.OpenChannel("direct-tcpip", newChannel.ExtraData())
 	if err != nil {
 		_ = newChannel.Reject(ssh.ConnectionFailed, "internal error")
 		return err
 	}
 	defer func() { _ = backendChannel.Close() }()
 
-	go ssh.DiscardRequests(requests)
+	go ssh.DiscardRequests(backendRequests)
 
-	clientChannel, _, err := newChannel.Accept()
+	clientChannel, clientRequests, err := newChannel.Accept()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = clientChannel.Close() }()
+
+	go ssh.DiscardRequests(clientRequests)
 
 	srv.relayChannels(backendChannel, clientChannel, &srv.metrics.PortForwardsLocalActive, &srv.metrics.PortForwardsLocalTotal)
 	return nil
@@ -1133,20 +1135,22 @@ func (srv *Server) handleDirectStreamLocal(backendConn *ssh.Client, authKeyOpts 
 		return nil
 	}
 
-	backendChannel, requests, err := backendConn.OpenChannel("direct-streamlocal@openssh.com", newChannel.ExtraData())
+	backendChannel, backendRequests, err := backendConn.OpenChannel("direct-streamlocal@openssh.com", newChannel.ExtraData())
 	if err != nil {
 		_ = newChannel.Reject(ssh.ConnectionFailed, "internal error")
 		return err
 	}
 	defer func() { _ = backendChannel.Close() }()
 
-	go ssh.DiscardRequests(requests)
+	go ssh.DiscardRequests(backendRequests)
 
-	clientChannel, _, err := newChannel.Accept()
+	clientChannel, clientRequests, err := newChannel.Accept()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = clientChannel.Close() }()
+
+	go ssh.DiscardRequests(clientRequests)
 
 	srv.relayChannels(backendChannel, clientChannel, &srv.metrics.SocketForwardsLocalActive, &srv.metrics.SocketForwardsLocalTotal)
 	return nil
