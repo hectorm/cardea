@@ -131,11 +131,11 @@ func UnmarshalKeyBlob(data []byte) (*KeyBlob, error) {
 }
 
 func writeChunk(w io.Writer, data []byte) error {
-	len := len(data)
-	if len > math.MaxUint16 {
-		return fmt.Errorf("key blob chunk too large: %d bytes", len)
+	length := len(data)
+	if length > math.MaxUint16 {
+		return fmt.Errorf("key blob chunk too large: %d bytes", length)
 	}
-	if err := binary.Write(w, binary.BigEndian, uint16(len)); err != nil {
+	if err := binary.Write(w, binary.BigEndian, uint16(length)); err != nil {
 		return err
 	}
 	_, err := w.Write(data)
