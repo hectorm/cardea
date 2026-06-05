@@ -442,6 +442,12 @@ func ParseTimespec(s string) (time.Time, error) {
 		s = s[:len(s)-1]
 	}
 
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return time.Time{}, fmt.Errorf("invalid timespec %q", s)
+		}
+	}
+
 	loc := time.Local
 	if isUTC {
 		loc = time.UTC
