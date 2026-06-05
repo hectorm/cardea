@@ -296,53 +296,58 @@ func SplitOption(s string) (name, value string, ok bool) {
 
 func ParsePermitConnect(s string) (PermitConnect, error) {
 	s = strings.TrimSpace(s)
-	if s != "" && len(s) <= MaxPermitConnectLength {
-		canonicalizeHost := func(host string) (string, bool) {
-			if ip := net.ParseIP(host); ip != nil {
-				return ip.String(), true
-			}
-			return strings.ToLower(host), false
-		}
-		normalizeHost := func(host string) (string, bool) {
-			bracketed := strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]")
-			if bracketed {
-				host = host[1 : len(host)-1]
-			}
-			if host == "" {
-				return "", false
-			}
-			host, isIP := canonicalizeHost(host)
-			if !isIP && !bracketed && strings.Contains(host, ":") {
-				return "", false
-			}
-			return host, true
-		}
+	if s == "" {
+		return PermitConnect{}, fmt.Errorf("empty value")
+	}
+	if len(s) > MaxPermitConnectLength {
+		return PermitConnect{}, fmt.Errorf("exceeds maximum length of %d", MaxPermitConnectLength)
+	}
 
-		// Try format <user>@<host>[:<port>]
-		if i := strings.LastIndex(s, "@"); i != -1 {
-			user, addr := s[:i], s[i+1:]
-			if user != "" && addr != "" {
-				host, port, err := net.SplitHostPort(addr)
-				if err == nil && host != "" && port != "" {
-					host, _ = canonicalizeHost(host)
-					return PermitConnect{User: user, Host: host, Port: port}, nil
-				}
-				if host, ok := normalizeHost(addr); ok {
-					return PermitConnect{User: user, Host: host, Port: "22"}, nil
-				}
+	canonicalizeHost := func(host string) (string, bool) {
+		if ip := net.ParseIP(host); ip != nil {
+			return ip.String(), true
+		}
+		return strings.ToLower(host), false
+	}
+	normalizeHost := func(host string) (string, bool) {
+		bracketed := strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]")
+		if bracketed {
+			host = host[1 : len(host)-1]
+		}
+		if host == "" {
+			return "", false
+		}
+		host, isIP := canonicalizeHost(host)
+		if !isIP && !bracketed && strings.Contains(host, ":") {
+			return "", false
+		}
+		return host, true
+	}
+
+	// Try format <user>@<host>[:<port>]
+	if i := strings.LastIndex(s, "@"); i != -1 {
+		user, addr := s[:i], s[i+1:]
+		if user != "" && addr != "" {
+			host, port, err := net.SplitHostPort(addr)
+			if err == nil && host != "" && port != "" {
+				host, _ = canonicalizeHost(host)
+				return PermitConnect{User: user, Host: host, Port: port}, nil
+			}
+			if host, ok := normalizeHost(addr); ok {
+				return PermitConnect{User: user, Host: host, Port: "22"}, nil
 			}
 		}
+	}
 
-		// Try format <user>+<host>[+<port>]
-		if parts := strings.Split(s, "+"); len(parts) == 2 || len(parts) == 3 {
-			user, host, port := parts[0], parts[1], "22"
-			if len(parts) == 3 {
-				port = parts[2]
-			}
-			if user != "" && port != "" {
-				if host, ok := normalizeHost(host); ok {
-					return PermitConnect{User: user, Host: host, Port: port}, nil
-				}
+	// Try format <user>+<host>[+<port>]
+	if parts := strings.Split(s, "+"); len(parts) == 2 || len(parts) == 3 {
+		user, host, port := parts[0], parts[1], "22"
+		if len(parts) == 3 {
+			port = parts[2]
+		}
+		if user != "" && port != "" {
+			if host, ok := normalizeHost(host); ok {
+				return PermitConnect{User: user, Host: host, Port: port}, nil
 			}
 		}
 	}

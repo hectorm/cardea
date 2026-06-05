@@ -1265,21 +1265,22 @@ func TestAuthkeys(t *testing.T) {
 			tests := []struct {
 				name  string
 				input string
+				errSS string
 			}{
-				{name: "empty", input: ""},
-				{name: "no_user", input: "example.com:22"},
-				{name: "too_long", input: "*@" + strings.Repeat("a", MaxPermitConnectLength) + ":22"},
-				{name: "at_empty_user", input: "@example.com:22"},
-				{name: "at_empty_host", input: "root@:22"},
-				{name: "at_empty_brackets", input: "root@[]"},
-				{name: "at_empty_brackets_with_port", input: "root@[]:22"},
-				{name: "at_empty_port", input: "root@host:"},
-				{name: "plus_empty_user", input: "+example.com+22"},
-				{name: "plus_empty_host", input: "root++22"},
-				{name: "plus_empty_brackets", input: "root+[]"},
-				{name: "plus_empty_brackets_with_port", input: "root+[]+22"},
-				{name: "plus_empty_port", input: "root+host+"},
-				{name: "plus_too_many_parts", input: "a+b+c+d"},
+				{name: "empty", input: "", errSS: "empty"},
+				{name: "no_user", input: "example.com:22", errSS: "expected"},
+				{name: "too_long", input: "*@" + strings.Repeat("a", MaxPermitConnectLength) + ":22", errSS: "maximum length"},
+				{name: "at_empty_user", input: "@example.com:22", errSS: "expected"},
+				{name: "at_empty_host", input: "root@:22", errSS: "expected"},
+				{name: "at_empty_brackets", input: "root@[]", errSS: "expected"},
+				{name: "at_empty_brackets_with_port", input: "root@[]:22", errSS: "expected"},
+				{name: "at_empty_port", input: "root@host:", errSS: "expected"},
+				{name: "plus_empty_user", input: "+example.com+22", errSS: "expected"},
+				{name: "plus_empty_host", input: "root++22", errSS: "expected"},
+				{name: "plus_empty_brackets", input: "root+[]", errSS: "expected"},
+				{name: "plus_empty_brackets_with_port", input: "root+[]+22", errSS: "expected"},
+				{name: "plus_empty_port", input: "root+host+", errSS: "expected"},
+				{name: "plus_too_many_parts", input: "a+b+c+d", errSS: "expected"},
 			}
 
 			for _, tt := range tests {
@@ -1287,6 +1288,10 @@ func TestAuthkeys(t *testing.T) {
 					_, err := ParsePermitConnect(tt.input)
 					if err == nil {
 						t.Error("expected error, got nil")
+						return
+					}
+					if !strings.Contains(err.Error(), tt.errSS) {
+						t.Errorf("expected error containing %q, got %q", tt.errSS, err.Error())
 					}
 				})
 			}
