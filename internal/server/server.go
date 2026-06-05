@@ -219,10 +219,11 @@ func NewServer(cfg *config.Config, opts ...Option) (*Server, error) {
 	srv.recordingsMaxBytes = maxBytes
 
 	srv.sshServerConfig = &ssh.ServerConfig{
-		ServerVersion:     "SSH-2.0-Cardea",
-		PublicKeyCallback: srv.publicKeyCallback,
-		BannerCallback:    srv.bannerCallback,
-		MaxAuthTries:      6,
+		ServerVersion:             "SSH-2.0-Cardea",
+		PublicKeyCallback:         srv.publicKeyCallback,
+		VerifiedPublicKeyCallback: srv.verifiedPublicKeyCallback,
+		BannerCallback:            srv.bannerCallback,
+		MaxAuthTries:              6,
 	}
 	srv.sshServerConfig.AddHostKey(srv.signer)
 
@@ -1424,16 +1425,24 @@ func (srv *Server) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (
 		authRequest: authReq,
 		pubKeyOpts:  decision.pubKeyOpts,
 	}
-	srv.metrics.AuthSuccessesTotal.Add(1)
-	slog.Info("access allowed",
-		"backend", authConn.user,
-		"remote_addr", authConn.remoteAddr,
-		"session_id", authConn.sessionID,
-		"fingerprint", authConn.pubKeyFingerprint,
-		"comment", authConn.pubKeyOpts.Comment,
-	)
 
 	return &ssh.Permissions{ExtraData: map[any]any{authConnectionKey{}: authConn}}, nil
+}
+
+func (srv *Server) verifiedPublicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey, permissions *ssh.Permissions, algo string) (*ssh.Permissions, error) {
+	if permissions != nil {
+		if authConn, ok := permissions.ExtraData[authConnectionKey{}].(*authConnection); ok {
+			srv.metrics.AuthSuccessesTotal.Add(1)
+			slog.Info("access allowed",
+				"backend", authConn.user,
+				"remote_addr", authConn.remoteAddr,
+				"session_id", authConn.sessionID,
+				"fingerprint", authConn.pubKeyFingerprint,
+				"comment", authConn.pubKeyOpts.Comment,
+			)
+		}
+	}
+	return permissions, nil
 }
 
 func (srv *Server) authorizePublicKey(authReq authRequest) authDecision {
