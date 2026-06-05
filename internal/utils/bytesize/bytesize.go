@@ -81,7 +81,7 @@ func parseBytes(s string) (int64, error) {
 	}
 
 	bytes := f * mult
-	if bytes < 0 || bytes > math.MaxInt64 {
+	if bytes < 0 || bytes >= 1<<63 {
 		return 0, fmt.Errorf("size out of range")
 	}
 	return int64(math.Round(bytes)), nil
