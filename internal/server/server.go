@@ -298,7 +298,7 @@ func (srv *Server) Start() error {
 				select {
 				case <-srv.ctx.Done():
 					return
-				default:
+				case <-time.After(1 * time.Second):
 					slog.Error("failed to accept incoming connection", "error", err)
 					continue
 				}
