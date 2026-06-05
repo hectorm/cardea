@@ -51,6 +51,9 @@ func parsePercent(s string) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
+	if math.IsNaN(p) {
+		return 0, fmt.Errorf("percentage is not a number: %q", s)
+	}
 	if p < 0 || p > 100 {
 		return 0, fmt.Errorf("percentage out of range: %v", p)
 	}

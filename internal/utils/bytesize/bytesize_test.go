@@ -25,6 +25,8 @@ func TestBytesize(t *testing.T) {
 			{name: "hundred_percent", input: "100%", wantPercent: 100, wantOk: true},
 			{name: "over_hundred_percent", input: "150%", wantOk: false},
 			{name: "invalid_percent", input: "invalid%", wantOk: false},
+			{name: "nan_percent", input: "NaN%", wantOk: false},
+			{name: "inf_percent", input: "Inf%", wantOk: false},
 			{name: "invalid_string", input: "invalid", wantOk: false},
 			{name: "negative_number", input: "-1", wantOk: false},
 			{name: "zero", input: "0", wantOk: true},
