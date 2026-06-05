@@ -155,6 +155,10 @@ Download from the [releases page](https://github.com/hectorm/cardea/releases). B
       maximum disk usage for session recordings; accepts percentage (e.g. 90%) or fixed size (e.g. 1GB) (env CARDEA_RECORDINGS_MAX_DISK_USAGE) (default "0")
 -log-level string
       log level: debug, info, warn, error, quiet (env CARDEA_LOG_LEVEL) (default "info")
+-validate-authorized-keys
+      validate the authorized keys file and exit
+-validate-known-hosts
+      validate the known hosts file and exit
 -version
       show version and exit
 ```

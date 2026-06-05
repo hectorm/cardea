@@ -53,7 +53,6 @@ var (
 
 func NewConfig() *Config {
 	config := &Config{}
-	showVersion := false
 
 	flag.StringVar(
 		&config.Listen,
@@ -249,6 +248,23 @@ func NewConfig() *Config {
 		"log level: debug, info, warn, error, quiet (env CARDEA_LOG_LEVEL)",
 	)
 
+	validateAuthorizedKeys := false
+	flag.BoolVar(
+		&validateAuthorizedKeys,
+		"validate-authorized-keys",
+		false,
+		"validate the authorized keys file and exit",
+	)
+
+	validateKnownHosts := false
+	flag.BoolVar(
+		&validateKnownHosts,
+		"validate-known-hosts",
+		false,
+		"validate the known hosts file and exit",
+	)
+
+	showVersion := false
 	flag.BoolVar(
 		&showVersion,
 		"version",
@@ -285,6 +301,26 @@ func NewConfig() *Config {
 		os.Exit(1)
 	}
 	slog.SetDefault(logger)
+
+	if validateAuthorizedKeys || validateKnownHosts {
+		ok := true
+		if validateAuthorizedKeys {
+			if err := validateAuthorizedKeysFile(config); err != nil {
+				slog.Error("invalid authorized_keys", "error", err)
+				ok = false
+			}
+		}
+		if validateKnownHosts {
+			if err := validateKnownHostsFile(config); err != nil {
+				slog.Error("invalid known_hosts", "error", err)
+				ok = false
+			}
+		}
+		if !ok {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 
 	switch config.KeyStrategy {
 	case "file":
