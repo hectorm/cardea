@@ -1731,7 +1731,8 @@ func (srv *Server) marshalAuthorizedKey(key ssh.PublicKey) string {
 }
 
 func (srv *Server) shortSessionID(conn ssh.ConnMetadata) string {
-	return hex.EncodeToString(conn.SessionID()[:10])
+	id := conn.SessionID()
+	return hex.EncodeToString(id[:min(len(id), 10)])
 }
 
 func (srv *Server) fileWatcher() {
