@@ -218,7 +218,15 @@ func NewServer(cfg *config.Config, opts ...Option) (*Server, error) {
 	srv.recordingsMaxPercent = maxPercent
 	srv.recordingsMaxBytes = maxBytes
 
+	serverAlgos := ssh.SupportedAlgorithms()
 	srv.sshServerConfig = &ssh.ServerConfig{
+		Config: ssh.Config{
+			KeyExchanges: slices.DeleteFunc(serverAlgos.KeyExchanges, func(algo string) bool {
+				return strings.HasPrefix(algo, "diffie-hellman-")
+			}),
+			Ciphers: serverAlgos.Ciphers,
+			MACs:    serverAlgos.MACs,
+		},
 		ServerVersion:             "SSH-2.0-Cardea",
 		PublicKeyCallback:         srv.publicKeyCallback,
 		VerifiedPublicKeyCallback: srv.verifiedPublicKeyCallback,
@@ -227,7 +235,13 @@ func NewServer(cfg *config.Config, opts ...Option) (*Server, error) {
 	}
 	srv.sshServerConfig.AddHostKey(srv.signer)
 
+	clientAlgos := ssh.SupportedAlgorithms()
 	srv.sshClientConfig = &ssh.ClientConfig{
+		Config: ssh.Config{
+			KeyExchanges: clientAlgos.KeyExchanges,
+			Ciphers:      clientAlgos.Ciphers,
+			MACs:         clientAlgos.MACs,
+		},
 		HostKeyCallback: srv.hostKeyCallback,
 		Timeout:         sshConnTimeout,
 	}
