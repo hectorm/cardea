@@ -188,10 +188,10 @@ configs:
             "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
             "datasource": { "type": "prometheus", "uid": "$${datasource}" },
             "targets": [
-              { "expr": "cardea_connections_active * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Active connections ({{node_id}})", "refId": "A" },
-              { "expr": "cardea_sessions_active * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Active sessions ({{node_id}})", "refId": "B" },
-              { "expr": "rate(cardea_connections_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Connections/s ({{node_id}})", "refId": "C" },
-              { "expr": "rate(cardea_sessions_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Sessions/s ({{node_id}})", "refId": "D" }
+              { "expr": "sum by (node_id) (cardea_connections_active * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Active connections ({{node_id}})", "refId": "A" },
+              { "expr": "sum by (node_id) (cardea_sessions_active * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Active sessions ({{node_id}})", "refId": "B" },
+              { "expr": "sum by (node_id) (rate(cardea_connections_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Connections/s ({{node_id}})", "refId": "C" },
+              { "expr": "sum by (node_id) (rate(cardea_sessions_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Sessions/s ({{node_id}})", "refId": "D" }
             ]
           },
           {
@@ -200,8 +200,8 @@ configs:
             "datasource": { "type": "prometheus", "uid": "$${datasource}" },
             "fieldConfig": { "defaults": { "unit": "Bps" } },
             "targets": [
-              { "expr": "rate(cardea_received_bytes_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Received ({{node_id}})", "refId": "A" },
-              { "expr": "rate(cardea_sent_bytes_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Sent ({{node_id}})", "refId": "B" }
+              { "expr": "sum by (node_id) (rate(cardea_received_bytes_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Received ({{node_id}})", "refId": "A" },
+              { "expr": "sum by (node_id) (rate(cardea_sent_bytes_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Sent ({{node_id}})", "refId": "B" }
             ]
           },
           {
@@ -226,10 +226,10 @@ configs:
             "gridPos": { "h": 8, "w": 8, "x": 0, "y": 20 },
             "datasource": { "type": "prometheus", "uid": "$${datasource}" },
             "targets": [
-              { "expr": "cardea_port_forwards_local_active * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Local active ({{node_id}})", "refId": "A" },
-              { "expr": "cardea_port_forwards_remote_active * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Remote active ({{node_id}})", "refId": "B" },
-              { "expr": "rate(cardea_port_forwards_local_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Local/s ({{node_id}})", "refId": "C" },
-              { "expr": "rate(cardea_port_forwards_remote_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Remote/s ({{node_id}})", "refId": "D" }
+              { "expr": "sum by (node_id) (cardea_port_forwards_local_active * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Local active ({{node_id}})", "refId": "A" },
+              { "expr": "sum by (node_id) (cardea_port_forwards_remote_active * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Remote active ({{node_id}})", "refId": "B" },
+              { "expr": "sum by (node_id) (rate(cardea_port_forwards_local_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Local/s ({{node_id}})", "refId": "C" },
+              { "expr": "sum by (node_id) (rate(cardea_port_forwards_remote_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Remote/s ({{node_id}})", "refId": "D" }
             ]
           },
           {
@@ -237,18 +237,21 @@ configs:
             "gridPos": { "h": 8, "w": 8, "x": 8, "y": 20 },
             "datasource": { "type": "prometheus", "uid": "$${datasource}" },
             "targets": [
-              { "expr": "cardea_socket_forwards_local_active * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Local active ({{node_id}})", "refId": "A" },
-              { "expr": "cardea_socket_forwards_remote_active * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Remote active ({{node_id}})", "refId": "B" },
-              { "expr": "rate(cardea_socket_forwards_local_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Local/s ({{node_id}})", "refId": "C" },
-              { "expr": "rate(cardea_socket_forwards_remote_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Remote/s ({{node_id}})", "refId": "D" }
+              { "expr": "sum by (node_id) (cardea_socket_forwards_local_active * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Local active ({{node_id}})", "refId": "A" },
+              { "expr": "sum by (node_id) (cardea_socket_forwards_remote_active * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Remote active ({{node_id}})", "refId": "B" },
+              { "expr": "sum by (node_id) (rate(cardea_socket_forwards_local_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Local/s ({{node_id}})", "refId": "C" },
+              { "expr": "sum by (node_id) (rate(cardea_socket_forwards_remote_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Remote/s ({{node_id}})", "refId": "D" }
             ]
           },
           {
-            "title": "Rate limiting", "type": "timeseries",
+            "title": "Rejections", "type": "timeseries",
             "gridPos": { "h": 8, "w": 8, "x": 16, "y": 20 },
             "datasource": { "type": "prometheus", "uid": "$${datasource}" },
             "targets": [
-              { "expr": "rate(cardea_rate_limit_rejections_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Rejections/s ({{node_id}})", "refId": "A" }
+              { "expr": "sum by (node_id) (rate(cardea_rate_limit_rejections_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Rate limit/s ({{node_id}})", "refId": "A" },
+              { "expr": "sum by (node_id) (rate(cardea_connection_rejections_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Connection limit/s ({{node_id}})", "refId": "B" },
+              { "expr": "sum by (node_id) (rate(cardea_session_rejections_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Session limit/s ({{node_id}})", "refId": "C" },
+              { "expr": "sum by (node_id) (rate(cardea_forward_rejections_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Forward limit/s ({{node_id}})", "refId": "D" }
             ]
           },
           {
@@ -257,9 +260,9 @@ configs:
             "gridPos": { "h": 8, "w": 8, "x": 0, "y": 28 },
             "datasource": { "type": "prometheus", "uid": "$${datasource}" },
             "targets": [
-              { "expr": "go_goroutines * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Goroutines ({{node_id}})", "refId": "A" },
-              { "expr": "go_threads * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Threads ({{node_id}})", "refId": "B" },
-              { "expr": "go_sched_gomaxprocs_threads * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "GOMAXPROCS ({{node_id}})", "refId": "C" }
+              { "expr": "sum by (node_id) (go_goroutines * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Goroutines ({{node_id}})", "refId": "A" },
+              { "expr": "sum by (node_id) (go_threads * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Threads ({{node_id}})", "refId": "B" },
+              { "expr": "sum by (node_id) (go_sched_gomaxprocs_threads * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "GOMAXPROCS ({{node_id}})", "refId": "C" }
             ]
           },
           {
@@ -268,9 +271,9 @@ configs:
             "gridPos": { "h": 8, "w": 8, "x": 8, "y": 28 },
             "datasource": { "type": "prometheus", "uid": "$${datasource}" },
             "targets": [
-              { "expr": "rate(go_gc_cycles_total_gc_cycles_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Total GC cycles/s ({{node_id}})", "refId": "A" },
-              { "expr": "rate(go_gc_cycles_automatic_gc_cycles_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Auto GC cycles/s ({{node_id}})", "refId": "B" },
-              { "expr": "rate(go_gc_cycles_forced_gc_cycles_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Forced GC cycles/s ({{node_id}})", "refId": "C" }
+              { "expr": "sum by (node_id) (rate(go_gc_cycles_total_gc_cycles_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Total GC cycles/s ({{node_id}})", "refId": "A" },
+              { "expr": "sum by (node_id) (rate(go_gc_cycles_automatic_gc_cycles_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Auto GC cycles/s ({{node_id}})", "refId": "B" },
+              { "expr": "sum by (node_id) (rate(go_gc_cycles_forced_gc_cycles_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Forced GC cycles/s ({{node_id}})", "refId": "C" }
             ]
           },
           {
@@ -280,7 +283,7 @@ configs:
             "datasource": { "type": "prometheus", "uid": "$${datasource}" },
             "fieldConfig": { "defaults": { "unit": "s" } },
             "targets": [
-              { "expr": "rate(go_sync_mutex_wait_total_seconds_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Mutex wait/s ({{node_id}})", "refId": "A" }
+              { "expr": "sum by (node_id) (rate(go_sync_mutex_wait_total_seconds_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Mutex wait/s ({{node_id}})", "refId": "A" }
             ]
           },
           {
@@ -290,11 +293,11 @@ configs:
             "datasource": { "type": "prometheus", "uid": "$${datasource}" },
             "fieldConfig": { "defaults": { "unit": "bytes" } },
             "targets": [
-              { "expr": "go_gc_heap_live_bytes * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Heap live ({{node_id}})", "refId": "A" },
-              { "expr": "go_gc_scan_heap_bytes * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Scan heap ({{node_id}})", "refId": "B" },
-              { "expr": "go_gc_scan_stack_bytes * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Scan stack ({{node_id}})", "refId": "C" },
-              { "expr": "go_gc_scan_total_bytes * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Scan total ({{node_id}})", "refId": "D" },
-              { "expr": "(go_gc_gomemlimit_bytes < 9223372036854775807) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Memory limit ({{node_id}})", "refId": "E" }
+              { "expr": "sum by (node_id) (go_gc_heap_live_bytes * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Heap live ({{node_id}})", "refId": "A" },
+              { "expr": "sum by (node_id) (go_gc_scan_heap_bytes * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Scan heap ({{node_id}})", "refId": "B" },
+              { "expr": "sum by (node_id) (go_gc_scan_stack_bytes * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Scan stack ({{node_id}})", "refId": "C" },
+              { "expr": "sum by (node_id) (go_gc_scan_total_bytes * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Scan total ({{node_id}})", "refId": "D" },
+              { "expr": "sum by (node_id) ((go_gc_gomemlimit_bytes < 9223372036854775807) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Memory limit ({{node_id}})", "refId": "E" }
             ]
           },
           {
@@ -303,7 +306,7 @@ configs:
             "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
             "datasource": { "type": "prometheus", "uid": "$${datasource}" },
             "targets": [
-              { "expr": "rate(go_gc_heap_tiny_allocs_objects_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"}", "legendFormat": "Tiny allocs/s ({{node_id}})", "refId": "A" }
+              { "expr": "sum by (node_id) (rate(go_gc_heap_tiny_allocs_objects_total[$$__rate_interval]) * on(job, instance) group_left(node_id) cardea_node_info{node_id=~\"$$node\"})", "legendFormat": "Tiny allocs/s ({{node_id}})", "refId": "A" }
             ]
           }
         ]
