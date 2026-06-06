@@ -70,6 +70,20 @@ func TestRateLimit(t *testing.T) {
 			},
 		},
 		{
+			name:         "reset_unwinds_parents",
+			maxCount:     2,
+			promoteAfter: 2,
+			steps: []step{
+				{op: opTake, ip: "2001:db8:0:0::1", takes: 3, wantAllowed: 2},
+				{op: opTake, ip: "2001:db8:0:1::1", takes: 3, wantAllowed: 2},
+				{op: opTake, ip: "2001:db8:0:100::1", takes: 3, wantAllowed: 2},
+				{op: opTake, ip: "2001:db8:0:101::1", takes: 3, wantAllowed: 2},
+				{op: opTake, ip: "2001:db8:0:200::1", takes: 1, wantAllowed: 0},
+				{op: opReset, ip: "2001:db8:0:0::1"},
+				{op: opTake, ip: "2001:db8:0:200::1", takes: 1, wantAllowed: 1},
+			},
+		},
+		{
 			name:     "expiry",
 			maxCount: 2,
 			steps: []step{

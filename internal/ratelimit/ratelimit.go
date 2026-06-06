@@ -87,9 +87,27 @@ func (rl *RateLimit) Reset(ip string) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	if e, ok := rl.entries[ladder[0].key]; ok {
-		delete(rl.entries, e.key)
-		rl.lru.Remove(e.element)
+	leaf, ok := rl.entries[ladder[0].key]
+	if !ok {
+		return
+	}
+
+	propagate := leaf.parentNotified
+	delete(rl.entries, leaf.key)
+	rl.lru.Remove(leaf.element)
+
+	for i := 1; i < len(ladder) && propagate; i++ {
+		e, ok := rl.entries[ladder[i].key]
+		if !ok {
+			break
+		}
+		if e.count > 0 {
+			e.count--
+		}
+		propagate = e.count < ladder[i].limit && e.parentNotified
+		if propagate {
+			e.parentNotified = false
+		}
 	}
 }
 
