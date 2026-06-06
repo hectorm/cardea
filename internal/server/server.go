@@ -208,7 +208,7 @@ func NewServer(cfg *config.Config, opts ...Option) (*Server, error) {
 	}
 
 	if srv.rateLimit == nil && srv.config.RateLimitMax > 0 {
-		srv.rateLimit = ratelimit.NewRateLimit(10000, srv.config.RateLimitMax, srv.config.RateLimitTime)
+		srv.rateLimit = ratelimit.NewRateLimit(100000, srv.config.RateLimitMax, srv.config.RateLimitTime)
 	}
 
 	maxPercent, maxBytes, err := bytesize.Parse(srv.config.RecordingsMaxDiskUsage)
