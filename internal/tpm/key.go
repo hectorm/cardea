@@ -154,17 +154,9 @@ func readChunk(r io.Reader) ([]byte, error) {
 	return chunk, nil
 }
 
-func createKeyBlob(t transport.TPM, opts *KeyOptions) (*KeyBlob, tpm2.AuthHandle, *ecdsa.PublicKey, error) {
+func createKeyBlob(t transport.TPM, srk tpm2.AuthHandle, opts *KeyOptions) (*KeyBlob, tpm2.NamedHandle, *ecdsa.PublicKey, error) {
 	if opts == nil {
 		opts = &KeyOptions{}
-	}
-
-	srk, srkPub, needsFlush, err := getOrCreateSRK(t, opts)
-	if err != nil {
-		return nil, tpm2.AuthHandle{}, nil, err
-	}
-	if needsFlush {
-		defer flushContext(t, srk.Handle)
 	}
 
 	createCmd := tpm2.Create{
@@ -176,9 +168,9 @@ func createKeyBlob(t transport.TPM, opts *KeyOptions) (*KeyBlob, tpm2.AuthHandle
 		},
 		InPublic: tpm2.New2B(ecdsaP256Template),
 	}
-	createResp, err := createCmd.Execute(t, hmacSession(srk.Handle, srkPub))
+	createResp, err := createCmd.Execute(t)
 	if err != nil {
-		return nil, tpm2.AuthHandle{}, nil, err
+		return nil, tpm2.NamedHandle{}, nil, err
 	}
 
 	loadCmd := tpm2.Load{
@@ -186,15 +178,15 @@ func createKeyBlob(t transport.TPM, opts *KeyOptions) (*KeyBlob, tpm2.AuthHandle
 		InPrivate:    createResp.OutPrivate,
 		InPublic:     createResp.OutPublic,
 	}
-	loadResp, err := loadCmd.Execute(t, hmacSession(srk.Handle, srkPub))
+	loadResp, err := loadCmd.Execute(t)
 	if err != nil {
-		return nil, tpm2.AuthHandle{}, nil, err
+		return nil, tpm2.NamedHandle{}, nil, err
 	}
 
 	pubKey, err := extractECDSAPublicKey(createResp.OutPublic)
 	if err != nil {
 		flushContext(t, loadResp.ObjectHandle)
-		return nil, tpm2.AuthHandle{}, nil, err
+		return nil, tpm2.NamedHandle{}, nil, err
 	}
 
 	keyBlob := &KeyBlob{
@@ -203,29 +195,17 @@ func createKeyBlob(t transport.TPM, opts *KeyOptions) (*KeyBlob, tpm2.AuthHandle
 		Name:    loadResp.Name,
 	}
 
-	authHandle := tpm2.AuthHandle{
+	key := tpm2.NamedHandle{
 		Handle: loadResp.ObjectHandle,
 		Name:   loadResp.Name,
-		Auth:   tpm2.PasswordAuth(opts.KeyAuth),
 	}
 
-	return keyBlob, authHandle, pubKey, nil
+	return keyBlob, key, pubKey, nil
 }
 
-func loadKeyBlob(t transport.TPM, blob *KeyBlob, opts *KeyOptions) (tpm2.AuthHandle, *ecdsa.PublicKey, error) {
+func loadKeyBlob(t transport.TPM, srk tpm2.AuthHandle, blob *KeyBlob) (tpm2.NamedHandle, *ecdsa.PublicKey, error) {
 	if blob == nil {
-		return tpm2.AuthHandle{}, nil, fmt.Errorf("key blob is nil")
-	}
-	if opts == nil {
-		opts = &KeyOptions{}
-	}
-
-	srk, srkPub, needsFlush, err := getOrCreateSRK(t, opts)
-	if err != nil {
-		return tpm2.AuthHandle{}, nil, err
-	}
-	if needsFlush {
-		defer flushContext(t, srk.Handle)
+		return tpm2.NamedHandle{}, nil, fmt.Errorf("key blob is nil")
 	}
 
 	loadCmd := tpm2.Load{
@@ -233,33 +213,32 @@ func loadKeyBlob(t transport.TPM, blob *KeyBlob, opts *KeyOptions) (tpm2.AuthHan
 		InPrivate:    blob.Private,
 		InPublic:     blob.Public,
 	}
-	loadResp, err := loadCmd.Execute(t, hmacSession(srk.Handle, srkPub))
+	loadResp, err := loadCmd.Execute(t)
 	if err != nil {
-		return tpm2.AuthHandle{}, nil, err
+		return tpm2.NamedHandle{}, nil, err
 	}
 
 	if len(blob.Name.Buffer) == 0 {
 		flushContext(t, loadResp.ObjectHandle)
-		return tpm2.AuthHandle{}, nil, fmt.Errorf("key blob missing name")
+		return tpm2.NamedHandle{}, nil, fmt.Errorf("key blob missing name")
 	}
 	if !bytes.Equal(blob.Name.Buffer, loadResp.Name.Buffer) {
 		flushContext(t, loadResp.ObjectHandle)
-		return tpm2.AuthHandle{}, nil, fmt.Errorf("key blob name mismatch")
+		return tpm2.NamedHandle{}, nil, fmt.Errorf("key blob name mismatch")
 	}
 
 	pubKey, err := extractECDSAPublicKey(blob.Public)
 	if err != nil {
 		flushContext(t, loadResp.ObjectHandle)
-		return tpm2.AuthHandle{}, nil, err
+		return tpm2.NamedHandle{}, nil, err
 	}
 
-	authHandle := tpm2.AuthHandle{
+	key := tpm2.NamedHandle{
 		Handle: loadResp.ObjectHandle,
 		Name:   loadResp.Name,
-		Auth:   tpm2.PasswordAuth(opts.KeyAuth),
 	}
 
-	return authHandle, pubKey, nil
+	return key, pubKey, nil
 }
 
 var (
@@ -355,7 +334,13 @@ var (
 	}
 )
 
-func getOrCreateSRK(t transport.TPM, opts *KeyOptions) (tpm2.AuthHandle, tpm2.TPMTPublic, bool, error) {
+type srkContext struct {
+	handle    tpm2.AuthHandle
+	pub       tpm2.TPMTPublic
+	transient bool
+}
+
+func getOrCreateSRK(t transport.TPM, opts *KeyOptions) (srkContext, error) {
 	var parentHandle tpm2.TPMHandle
 	var parentAuth []byte
 
@@ -368,58 +353,73 @@ func getOrCreateSRK(t transport.TPM, opts *KeyOptions) (tpm2.AuthHandle, tpm2.TP
 		readPub := tpm2.ReadPublic{ObjectHandle: parentHandle}
 		resp, err := readPub.Execute(t)
 		if err != nil {
-			return tpm2.AuthHandle{}, tpm2.TPMTPublic{}, false, fmt.Errorf("persistent key 0x%x not found: %w", parentHandle, err)
+			return srkContext{}, fmt.Errorf("persistent key 0x%x not found: %w", parentHandle, err)
 		}
 
 		srkPub, err := resp.OutPublic.Contents()
 		if err != nil {
-			return tpm2.AuthHandle{}, tpm2.TPMTPublic{}, false, fmt.Errorf("parse srk public: %w", err)
+			return srkContext{}, fmt.Errorf("parse srk public: %w", err)
 		}
 
 		slog.Debug("using persistent srk", "handle", parentHandle)
-		authHandle := tpm2.AuthHandle{
-			Handle: parentHandle,
-			Name:   resp.Name,
-			Auth:   tpm2.PasswordAuth(parentAuth),
-		}
-
-		return authHandle, *srkPub, false, nil
+		return srkContext{
+			handle: tpm2.AuthHandle{
+				Handle: parentHandle,
+				Name:   resp.Name,
+				Auth:   srkSession(parentHandle, *srkPub, parentAuth),
+			},
+			pub:       *srkPub,
+			transient: false,
+		}, nil
 	}
 
 	createPrimaryCmd := tpm2.CreatePrimary{
 		PrimaryHandle: tpm2.AuthHandle{
 			Handle: tpm2.TPMRHOwner,
-			Auth:   tpm2.PasswordAuth(parentAuth),
+			Auth:   hmacSession(tpm2.Auth(parentAuth)),
 		},
 		InPublic: tpm2.New2B(srkTemplate),
 	}
 
 	resp, err := createPrimaryCmd.Execute(t)
 	if err != nil {
-		return tpm2.AuthHandle{}, tpm2.TPMTPublic{}, false, fmt.Errorf("create transient srk: %w (check owner password)", err)
+		return srkContext{}, fmt.Errorf("create transient srk: %w (check owner password)", err)
 	}
 
 	srkPub, err := resp.OutPublic.Contents()
 	if err != nil {
 		flushContext(t, resp.ObjectHandle)
-		return tpm2.AuthHandle{}, tpm2.TPMTPublic{}, false, fmt.Errorf("parse srk public: %w", err)
+		return srkContext{}, fmt.Errorf("parse srk public: %w", err)
 	}
 
 	slog.Debug("created transient srk", "handle", resp.ObjectHandle)
-	authHandle := tpm2.AuthHandle{
-		Handle: resp.ObjectHandle,
-		Name:   resp.Name,
-		Auth:   tpm2.PasswordAuth(nil),
-	}
-
-	return authHandle, *srkPub, true, nil
+	return srkContext{
+		handle: tpm2.AuthHandle{
+			Handle: resp.ObjectHandle,
+			Name:   resp.Name,
+			Auth:   srkSession(resp.ObjectHandle, *srkPub, nil),
+		},
+		pub:       *srkPub,
+		transient: true,
+	}, nil
 }
 
-func hmacSession(srkHandle tpm2.TPMHandle, srkPub tpm2.TPMTPublic) tpm2.Session {
-	return tpm2.HMAC(
-		tpm2.TPMAlgSHA256,
-		20,
+func hmacSession(opts ...tpm2.AuthOption) tpm2.Session {
+	return tpm2.HMAC(tpm2.TPMAlgSHA256, 20, opts...)
+}
+
+func srkSession(srkHandle tpm2.TPMHandle, srkPub tpm2.TPMTPublic, auth []byte) tpm2.Session {
+	return hmacSession(
+		tpm2.Auth(auth),
 		tpm2.AESEncryption(128, tpm2.EncryptInOut),
+		tpm2.Salted(srkHandle, srkPub),
+	)
+}
+
+func keyAuthSession(srkHandle tpm2.TPMHandle, srkPub tpm2.TPMTPublic, auth []byte) tpm2.Session {
+	return hmacSession(
+		tpm2.Auth(auth),
+		tpm2.AESEncryption(128, tpm2.EncryptIn),
 		tpm2.Salted(srkHandle, srkPub),
 	)
 }

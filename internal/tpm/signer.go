@@ -3,6 +3,7 @@
 package tpm
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/sha256"
 	"fmt"
@@ -22,14 +23,18 @@ import (
 var _ Signer = (*BlobSigner)(nil)
 
 type BlobSigner struct {
-	tpm       transport.TPMCloser
-	key       tpm2.AuthHandle
-	sshPubKey ssh.PublicKey
-	mu        sync.Mutex
-	closed    bool
+	tpm          transport.TPMCloser
+	key          tpm2.NamedHandle
+	keyAuth      []byte
+	srkHandle    tpm2.TPMHandle
+	srkPub       tpm2.TPMTPublic
+	srkTransient bool
+	sshPubKey    ssh.PublicKey
+	mu           sync.Mutex
+	closed       bool
 }
 
-func NewBlobSigner(devicePath, blobPath string, opts *KeyOptions) (Signer, error) {
+func NewBlobSigner(devicePath, blobPath string, opts *KeyOptions) (_ Signer, err error) {
 	if devicePath == "" {
 		return nil, fmt.Errorf("tpm device path is required")
 	}
@@ -38,6 +43,18 @@ func NewBlobSigner(devicePath, blobPath string, opts *KeyOptions) (Signer, error
 	}
 	if opts == nil {
 		opts = &KeyOptions{}
+	}
+	if len(opts.KeyAuth) > sha256.Size {
+		return nil, fmt.Errorf("tpm key auth must be at most %d bytes, got %d", sha256.Size, len(opts.KeyAuth))
+	}
+	if bytes.IndexByte(opts.KeyAuth, 0) != -1 {
+		return nil, fmt.Errorf("tpm key auth must not contain NUL bytes")
+	}
+	if bytes.IndexByte(opts.ParentAuth, 0) != -1 {
+		return nil, fmt.Errorf("tpm parent auth must not contain NUL bytes")
+	}
+	if len(opts.KeyAuth) == 0 {
+		slog.Warn("tpm key auth is not set")
 	}
 
 	opener := opts.Opener
@@ -51,64 +68,91 @@ func NewBlobSigner(devicePath, blobPath string, opts *KeyOptions) (Signer, error
 	}
 	slog.Debug("tpm device opened", "device", devicePath)
 
-	var authHandle tpm2.AuthHandle
+	var signer *BlobSigner
+	var srk srkContext
+	var key tpm2.NamedHandle
 	var pubKey *ecdsa.PublicKey
+
+	defer func() {
+		if err == nil {
+			return
+		}
+		if signer != nil {
+			_ = signer.Close()
+			return
+		}
+		if key.Handle != 0 {
+			flushContext(t, key.Handle)
+		}
+		if srk.transient {
+			flushContext(t, srk.handle.Handle)
+		}
+		_ = t.Close()
+	}()
+
+	srk, err = getOrCreateSRK(t, opts)
+	if err != nil {
+		return nil, fmt.Errorf("prepare srk: %w", err)
+	}
 
 	blobBytes, readErr := disk.ReadFile(blobPath)
 	switch {
 	case readErr == nil:
 		blob, err := UnmarshalKeyBlob(blobBytes)
 		if err != nil {
-			_ = t.Close()
 			return nil, fmt.Errorf("parse blob: %w", err)
 		}
 
-		authHandle, pubKey, err = loadKeyBlob(t, blob, opts)
+		key, pubKey, err = loadKeyBlob(t, srk.handle, blob)
 		if err != nil {
-			_ = t.Close()
 			return nil, fmt.Errorf("load blob: %w", err)
 		}
 		slog.Debug("tpm key loaded", "blob", blobPath)
 	case os.IsNotExist(readErr):
 		var blob *KeyBlob
-		blob, authHandle, pubKey, err = createKeyBlob(t, opts)
+		blob, key, pubKey, err = createKeyBlob(t, srk.handle, opts)
 		if err != nil {
-			_ = t.Close()
 			return nil, fmt.Errorf("create blob: %w", err)
 		}
 
 		serialized, err := blob.Marshal()
 		if err != nil {
-			flushContext(t, authHandle.Handle)
-			_ = t.Close()
 			return nil, fmt.Errorf("marshal blob: %w", err)
 		}
 
 		if err := disk.WriteFile(blobPath, serialized, 0o600); err != nil {
-			flushContext(t, authHandle.Handle)
-			_ = t.Close()
 			return nil, fmt.Errorf("write blob: %w", err)
 		}
 		slog.Debug("tpm key created", "blob", blobPath)
 	default:
-		_ = t.Close()
 		return nil, fmt.Errorf("read blob: %w", readErr)
 	}
 
 	sshPub, err := ssh.NewPublicKey(pubKey)
 	if err != nil {
-		flushContext(t, authHandle.Handle)
-		_ = t.Close()
 		return nil, fmt.Errorf("ssh public key: %w", err)
 	}
 
-	blobSigner := &BlobSigner{
-		tpm:       t,
-		key:       authHandle,
-		sshPubKey: sshPub,
+	signer = &BlobSigner{
+		tpm:          t,
+		key:          key,
+		keyAuth:      bytes.Clone(opts.KeyAuth),
+		srkHandle:    srk.handle.Handle,
+		srkPub:       srk.pub,
+		srkTransient: srk.transient,
+		sshPubKey:    sshPub,
 	}
 
-	return blobSigner, nil
+	probe := []byte("cardea tpm key self-test")
+	sig, err := signer.Sign(nil, probe)
+	if err != nil {
+		return nil, fmt.Errorf("key self-test: %w", err)
+	}
+	if err := signer.sshPubKey.Verify(probe, sig); err != nil {
+		return nil, fmt.Errorf("key self-test: %w", err)
+	}
+
+	return signer, nil
 }
 
 func (s *BlobSigner) PublicKey() ssh.PublicKey {
@@ -124,8 +168,13 @@ func (s *BlobSigner) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
 	}
 
 	digest := sha256.Sum256(data)
+	keyHandle := tpm2.AuthHandle{
+		Handle: s.key.Handle,
+		Name:   s.key.Name,
+		Auth:   keyAuthSession(s.srkHandle, s.srkPub, s.keyAuth),
+	}
 	signCmd := tpm2.Sign{
-		KeyHandle: s.key,
+		KeyHandle: keyHandle,
 		Digest:    tpm2.TPM2BDigest{Buffer: digest[:]},
 		InScheme: tpm2.TPMTSigScheme{
 			Scheme: tpm2.TPMAlgECDSA,
@@ -140,15 +189,14 @@ func (s *BlobSigner) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
 		},
 	}
 
-	sess := tpm2.HMAC(tpm2.TPMAlgSHA256, 20, tpm2.AESEncryption(128, tpm2.EncryptIn))
-	resp, err := signCmd.Execute(s.tpm, sess)
+	resp, err := signCmd.Execute(s.tpm)
 	if err != nil {
 		return nil, fmt.Errorf("sign: %w", err)
 	}
 
 	ecdsaSig, err := resp.Signature.Signature.ECDSA()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse ecdsa signature: %w", err)
 	}
 
 	rInt := new(big.Int).SetBytes(ecdsaSig.SignatureR.Buffer)
@@ -172,8 +220,15 @@ func (s *BlobSigner) Close() error {
 
 	if s.key.Handle != 0 {
 		flushContext(s.tpm, s.key.Handle)
-		s.key = tpm2.AuthHandle{}
+		s.key = tpm2.NamedHandle{}
 	}
+
+	if s.srkTransient && s.srkHandle != 0 {
+		flushContext(s.tpm, s.srkHandle)
+		s.srkHandle = 0
+	}
+
+	clear(s.keyAuth)
 
 	return s.tpm.Close()
 }
