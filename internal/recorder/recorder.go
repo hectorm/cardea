@@ -34,6 +34,7 @@ type AsciicastV3Recorder struct {
 	touch   *time.Timer
 	prev    time.Time
 	paused  bool
+	closed  bool
 	mu      sync.Mutex
 }
 
@@ -87,7 +88,7 @@ func (r *AsciicastV3Recorder) WriteHeader(header *AsciicastV3Header) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.writer != nil {
+	if r.closed || r.writer != nil {
 		return nil
 	}
 
@@ -136,7 +137,7 @@ func (r *AsciicastV3Recorder) WriteExit(exitStatus uint32) (err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.writer == nil {
+	if r.closed || r.writer == nil {
 		return nil
 	}
 
@@ -164,7 +165,7 @@ func (r *AsciicastV3Recorder) WriteResize(cols, rows uint32) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.writer == nil || r.paused {
+	if r.closed || r.paused || r.writer == nil {
 		return nil
 	}
 
@@ -192,7 +193,7 @@ func (r *AsciicastV3Recorder) Write(p []byte) (n int, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.writer == nil || r.paused {
+	if r.closed || r.paused || r.writer == nil {
 		return len(p), nil
 	}
 
@@ -220,7 +221,7 @@ func (r *AsciicastV3Recorder) Pause(command string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.writer == nil || r.paused {
+	if r.closed || r.paused || r.writer == nil {
 		return nil
 	}
 
@@ -253,6 +254,11 @@ func (r *AsciicastV3Recorder) Pause(command string) error {
 func (r *AsciicastV3Recorder) Resume() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if r.closed {
+		return
+	}
+
 	r.paused = false
 }
 
@@ -260,7 +266,10 @@ func (r *AsciicastV3Recorder) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	opened := r.writer != nil || r.file != nil
+	if r.closed {
+		return nil
+	}
+	r.closed = true
 
 	if r.flush != nil {
 		r.flush.Stop()
@@ -271,27 +280,22 @@ func (r *AsciicastV3Recorder) Close() error {
 		r.touch = nil
 	}
 
-	var wErr error
-	if r.writer != nil {
-		wErr = r.writer.Close()
-		writerPool.Put(r.writer)
-		r.writer = nil
+	if r.writer == nil {
+		return nil
 	}
 
-	var fErr error
-	if r.file != nil {
-		_ = disk.UnlockFile(r.file)
-		fErr = r.file.Close()
-		r.file = nil
-	}
+	wErr := r.writer.Close()
+	writerPool.Put(r.writer)
+	r.writer = nil
+
+	_ = disk.UnlockFile(r.file)
+	fErr := r.file.Close()
+	r.file = nil
 
 	if err := errors.Join(wErr, fErr); err != nil {
 		return err
 	}
-	if opened {
-		return os.Rename(r.tmpPath, r.path)
-	}
-	return nil
+	return os.Rename(r.tmpPath, r.path)
 }
 
 func (r *AsciicastV3Recorder) scheduleFlush() {
