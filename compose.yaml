@@ -90,10 +90,12 @@ services:
       GF_PLUGINS_PUBLIC_KEY_RETRIEVAL_ON_STARTUP: "false"
       GF_PLUGINS_PREINSTALL: ""
       GF_PLUGINS_DISABLE_PLUGINS: >-
+        elasticsearch,
         grafana-exploretraces-app,
         grafana-lokiexplore-app,
         grafana-metricsdrilldown-app,
-        grafana-pyroscope-app
+        grafana-pyroscope-app,
+        zipkin
 
 configs:
   prometheus-config:
