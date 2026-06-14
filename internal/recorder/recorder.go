@@ -60,6 +60,7 @@ type AsciicastV3Cardea struct {
 	BackendAddr   string `json:"backend_addr"`
 	FrontendAddr  string `json:"frontend_addr"`
 	SessionID     string `json:"session_id"`
+	SessionSeq    uint64 `json:"session_seq"`
 	Fingerprint   string `json:"fingerprint"`
 	Comment       string `json:"comment,omitempty"`
 }

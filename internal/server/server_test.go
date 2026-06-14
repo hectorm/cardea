@@ -1393,6 +1393,68 @@ func TestBastionSSHServer(t *testing.T) {
 			}
 		})
 
+		t.Run("sequence", func(t *testing.T) {
+			recordingsDir := t.TempDir()
+			bastionSrv, err := setupBastionServer(t,
+				fmt.Sprintf(`permitconnect="alice@%s" %s`, mockAddr, cliAuthorizedKeyStr),
+				fmt.Sprintf("%s %s", mockAddr, mockAuthorizedKeyStr),
+				func(srv *Server) error {
+					srv.config.RecordingsDir = recordingsDir
+					return nil
+				},
+			)
+			if err != nil {
+				t.Errorf("failed to setup bastion server: %v", err)
+				return
+			}
+
+			bastionConn, err := connectToServer(t, cli, bastionSrv)
+			if err != nil {
+				t.Errorf("failed to connect to server: %v", err)
+				return
+			}
+
+			for range 3 {
+				session, err := bastionConn.NewSession()
+				if err != nil {
+					t.Errorf("failed to create session: %v", err)
+					return
+				}
+				if _, err := session.Output("echo Hello, World!"); err != nil {
+					_ = session.Close()
+					t.Errorf("failed to execute command: %v", err)
+					return
+				}
+				_ = session.Close()
+			}
+
+			if err := waitFor(2*time.Second, func() error {
+				files, err := filepath.Glob(filepath.Join(recordingsDir, "[0-9][0-9][0-9][0-9]", "[0-9][0-9]", "[0-9][0-9]", "*.cast.gz"))
+				if err != nil {
+					return fmt.Errorf("failed to glob for recordings: %w", err)
+				}
+				if len(files) != 3 {
+					return fmt.Errorf("expected 3 recordings, got %d", len(files))
+				}
+
+				for i := range 3 {
+					seq := i + 1
+					matches, err := filepath.Glob(filepath.Join(recordingsDir, "[0-9][0-9][0-9][0-9]", "[0-9][0-9]", "[0-9][0-9]", fmt.Sprintf("*_%d.cast.gz", seq)))
+					if err != nil {
+						return fmt.Errorf("failed to glob for recording with sequence %d: %w", seq, err)
+					}
+					if len(matches) != 1 {
+						return fmt.Errorf("expected 1 recording with sequence %d, got %d", seq, len(matches))
+					}
+				}
+
+				return nil
+			}); err != nil {
+				t.Error(err)
+				return
+			}
+		})
+
 		t.Run("rotation", func(t *testing.T) {
 			t.Run("node_id", func(t *testing.T) {
 				recordingsDir := t.TempDir()

@@ -464,6 +464,7 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 	defer func() { _ = backendConn.Close() }()
 
 	var sessionCount, forwardCount atomic.Int64
+	var sessionSeqCount atomic.Uint64
 
 	// Handle global requests
 	go func() {
@@ -502,9 +503,10 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 					_ = newChannel.Reject(ssh.ResourceShortage, "too many concurrent sessions")
 					continue
 				}
+				sessionSeq := sessionSeqCount.Add(1)
 				go func() {
 					defer sessionCount.Add(-1)
-					if err := srv.handleSession(frontendConn, backendConn, authConn, newChannel); err != nil {
+					if err := srv.handleSession(frontendConn, backendConn, authConn, newChannel, sessionSeq); err != nil {
 						slog.Error("session error", "error", err)
 					}
 				}()
@@ -596,7 +598,7 @@ func (srv *Server) handleConnection(tcpConn net.Conn) error {
 
 func (srv *Server) handleSession(
 	frontendConn *ssh.ServerConn, backendConn *ssh.Client,
-	authConn *authConnection, newChannel ssh.NewChannel,
+	authConn *authConnection, newChannel ssh.NewChannel, sessionSeq uint64,
 ) error {
 	backendSession, err := backendConn.NewSession()
 	if err != nil {
@@ -625,7 +627,7 @@ func (srv *Server) handleSession(
 		}
 		path := filepath.Join(
 			filepath.Join(srv.config.RecordingsDir, now.Format("2006"), now.Format("01"), now.Format("02")),
-			fmt.Sprintf("%s-%s%s.cast.gz", now.Format("150405"), authConn.sessionID, nodeSuffix),
+			fmt.Sprintf("%s-%s_%d%s.cast.gz", now.Format("150405"), authConn.sessionID, sessionSeq, nodeSuffix),
 		)
 		asciicastRec = recorder.NewAsciicastV3Recorder(path)
 		asciicastHeader = recorder.NewAsciicastV3Header(fmt.Sprintf(
@@ -639,6 +641,7 @@ func (srv *Server) handleSession(
 			BackendAddr:   backendConn.RemoteAddr().String(),
 			FrontendAddr:  frontendConn.RemoteAddr().String(),
 			SessionID:     authConn.sessionID,
+			SessionSeq:    sessionSeq,
 			Fingerprint:   authConn.pubKeyFingerprint,
 			Comment:       authConn.pubKeyOpts.Comment,
 		}
