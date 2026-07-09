@@ -853,7 +853,7 @@ func (srv *Server) handleRequests(
 			} else if err := backendSession.Setenv("SSH_ORIGINAL_COMMAND", payload.Command); err != nil {
 				slog.Warn("failed to set SSH_ORIGINAL_COMMAND", "error", err)
 			}
-			if asciicastRec != nil {
+			if asciicastRec != nil && asciicastHeader != nil {
 				asciicastHeader.Command = command
 				if err := asciicastRec.WriteHeader(asciicastHeader); err != nil {
 					slog.Error("failed to write header", "error", err)
