@@ -341,12 +341,6 @@ func (srv *Server) Stop() error {
 		}
 	}
 
-	if srv.credentialProvider != nil {
-		if err := srv.credentialProvider.Close(); err != nil {
-			slog.Warn("failed to close credential provider", "error", err)
-		}
-	}
-
 	srv.connMap.Range(func(key, value any) bool {
 		if conn, ok := key.(net.Conn); ok {
 			_ = conn.Close()
@@ -363,9 +357,15 @@ func (srv *Server) Stop() error {
 
 	select {
 	case <-done:
-		slog.Info("all SSH connections closed gracefully")
+		slog.Info("all connection handlers finished")
 	case <-time.After(10 * time.Second):
-		slog.Warn("shutdown timeout, some connections may have been forcefully closed")
+		slog.Warn("shutdown timeout, some connection handlers are still running")
+	}
+
+	if srv.credentialProvider != nil {
+		if err := srv.credentialProvider.Close(); err != nil {
+			slog.Warn("failed to close credential provider", "error", err)
+		}
 	}
 
 	close(srv.done)
