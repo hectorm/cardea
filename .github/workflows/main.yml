@@ -183,7 +183,7 @@ jobs:
             GOARM="${{ matrix.go.GOARM }}"
           file ./dist/* && gzip -nv ./dist/*
       - name: "Generate artifact attestation"
-        uses: "actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373"
+        uses: "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8"
         with:
           subject-path: "./dist/*.gz"
       - name: "Upload artifact"
@@ -264,14 +264,14 @@ jobs:
             --sbom=true
       - name: "Generate artifact attestation (GHCR)"
         if: "github.event_name != 'pull_request'"
-        uses: "actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373"
+        uses: "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8"
         with:
           subject-name: "ghcr.io/${{ github.repository }}"
           subject-digest: "${{ steps.build-push.outputs.digest }}"
           push-to-registry: "${{ github.event_name != 'pull_request' }}"
       - name: "Generate artifact attestation (Docker Hub)"
         if: "github.event_name != 'pull_request'"
-        uses: "actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373"
+        uses: "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8"
         with:
           subject-name: "index.docker.io/${{ github.repository }}"
           subject-digest: "${{ steps.build-push.outputs.digest }}"
