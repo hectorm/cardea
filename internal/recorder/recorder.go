@@ -3,7 +3,8 @@ package recorder
 import (
 	"compress/flate"
 	"compress/gzip"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +24,11 @@ var writerPool = sync.Pool{
 		return w
 	},
 }
+
+var jsonOptions = json.JoinOptions(
+	jsontext.AllowInvalidUTF8(true),
+	json.Deterministic(true),
+)
 
 type AsciicastV3Recorder struct {
 	path    string
@@ -111,7 +117,7 @@ func (r *AsciicastV3Recorder) WriteHeader(header *AsciicastV3Header) error {
 	r.writer.Reset(file)
 	r.prev = time.Now()
 
-	headerBytes, err := json.Marshal(header)
+	headerBytes, err := json.Marshal(header, jsonOptions)
 	if err != nil {
 		return err
 	}
@@ -146,7 +152,7 @@ func (r *AsciicastV3Recorder) WriteExit(exitStatus uint32) (err error) {
 	event := AsciicastV3Event{now.Sub(r.prev).Seconds(), "x", strconv.FormatUint(uint64(exitStatus), 10)}
 	r.prev = now
 
-	eventBytes, err := json.Marshal(event)
+	eventBytes, err := json.Marshal(event, jsonOptions)
 	if err != nil {
 		return err
 	}
@@ -174,7 +180,7 @@ func (r *AsciicastV3Recorder) WriteResize(cols, rows uint32) error {
 	event := AsciicastV3Event{now.Sub(r.prev).Seconds(), "r", fmt.Sprintf("%dx%d", cols, rows)}
 	r.prev = now
 
-	eventBytes, err := json.Marshal(event)
+	eventBytes, err := json.Marshal(event, jsonOptions)
 	if err != nil {
 		return err
 	}
@@ -202,7 +208,7 @@ func (r *AsciicastV3Recorder) Write(p []byte) (n int, err error) {
 	event := AsciicastV3Event{now.Sub(r.prev).Seconds(), "o", string(p)}
 	r.prev = now
 
-	eventBytes, err := json.Marshal(event)
+	eventBytes, err := json.Marshal(event, jsonOptions)
 	if err != nil {
 		return 0, err
 	}
@@ -235,7 +241,7 @@ func (r *AsciicastV3Recorder) Pause(command string) error {
 	event := AsciicastV3Event{now.Sub(r.prev).Seconds(), "o", msg}
 	r.prev = now
 
-	eventBytes, err := json.Marshal(event)
+	eventBytes, err := json.Marshal(event, jsonOptions)
 	if err != nil {
 		return err
 	}
