@@ -325,8 +325,7 @@ func ParsePermitConnect(s string) (PermitConnect, error) {
 	}
 
 	// Try format <user>@<host>[:<port>]
-	if i := strings.LastIndex(s, "@"); i != -1 {
-		user, addr := s[:i], s[i+1:]
+	if user, addr, ok := strings.CutLast(s, "@"); ok {
 		if user != "" && addr != "" {
 			host, port, err := net.SplitHostPort(addr)
 			if err == nil && host != "" && port != "" {
