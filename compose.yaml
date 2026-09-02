@@ -34,7 +34,7 @@ services:
       CARDEA_LOG_LEVEL: "${CARDEA_LOG_LEVEL:-debug}"
 
   prometheus:
-    image: "docker.io/prom/prometheus:v3.13.1"
+    image: "docker.io/prom/prometheus:v3.14.0"
     profiles: ["metrics"]
     restart: "always"
     hostname: "prometheus"
