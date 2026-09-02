@@ -5,13 +5,11 @@ package tpm
 import (
 	"bytes"
 	"crypto/ecdsa"
-	"crypto/elliptic"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"log/slog"
 	"math"
-	"math/big"
 	"strconv"
 	"strings"
 
@@ -435,11 +433,7 @@ func extractECDSAPublicKey(pubTpm tpm2.TPM2BPublic) (*ecdsa.PublicKey, error) {
 		return nil, fmt.Errorf("get ecc parameters: %w", err)
 	}
 
-	var curve elliptic.Curve
-	switch eccParms.CurveID {
-	case tpm2.TPMECCNistP256:
-		curve = elliptic.P256()
-	default:
+	if eccParms.CurveID != tpm2.TPMECCNistP256 {
 		return nil, fmt.Errorf("unsupported elliptic curve: %v", eccParms.CurveID)
 	}
 
@@ -448,10 +442,9 @@ func extractECDSAPublicKey(pubTpm tpm2.TPM2BPublic) (*ecdsa.PublicKey, error) {
 		return nil, fmt.Errorf("get ecc unique: %w", err)
 	}
 
-	pubKey := &ecdsa.PublicKey{
-		Curve: curve,
-		X:     new(big.Int).SetBytes(eccUnique.X.Buffer),
-		Y:     new(big.Int).SetBytes(eccUnique.Y.Buffer),
+	pubKey, err := tpm2.ECDSAPub(eccParms, eccUnique)
+	if err != nil {
+		return nil, fmt.Errorf("get ecdsa public key: %w", err)
 	}
 
 	return pubKey, nil
