@@ -1,7 +1,7 @@
 package timewindow
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"strconv"
 	"strings"
@@ -125,7 +125,7 @@ func (w Window) MarshalJSON() ([]byte, error) {
 	}{
 		windowAlias: windowAlias(w),
 		Location:    loc.String(),
-	})
+	}, json.FormatNilSliceAsNull(true))
 }
 
 func (w *Window) UnmarshalJSON(data []byte) error {

@@ -1,7 +1,7 @@
 package timewindow
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"strings"
 	"testing"
 	"time"
@@ -310,12 +310,8 @@ func TestTimeWindow(t *testing.T) {
 					if err := json.Unmarshal(data, &restored); err != nil {
 						t.Fatalf("unmarshal error: %v", err)
 					}
-					restoredData, err := json.Marshal(restored)
-					if err != nil {
-						t.Fatalf("re-marshal error: %v", err)
-					}
-					if string(data) != string(restoredData) {
-						t.Errorf("round-trip mismatch:\n  original: %s\n  restored: %s", data, restoredData)
+					if got := restored.String(); got != tt.input {
+						t.Errorf("round-trip mismatch: got %q, want %q", got, tt.input)
 					}
 				})
 			}
