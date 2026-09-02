@@ -43,7 +43,7 @@ func (s *simulatorTransport) Close() error {
 
 func simulatorOpener() tpm.Opener {
 	return func(_ string) (transport.TPMCloser, error) {
-		sim, err := simulator.Get()
+		sim, err := simulator.GetWithFixedSeedInsecure(1)
 		if err != nil {
 			return nil, err
 		}
@@ -118,6 +118,7 @@ func TestBastionSSHServerTPM(t *testing.T) {
 					t.Errorf("failed to create blob signer: %v", err)
 					return
 				}
+				defer func() { _ = signer.Close() }()
 				if !openerCalled {
 					t.Error("expected custom opener to be called")
 					return
@@ -138,7 +139,7 @@ func TestBastionSSHServerTPM(t *testing.T) {
 					return
 				}
 
-				_ = signer.PublicKey()
+				publicKey := marshalAuthorizedKey(signer.PublicKey())
 
 				_ = signer.Close()
 				if _, err := signer.Sign(nil, []byte("x")); err == nil || !strings.Contains(err.Error(), "closed") {
@@ -148,6 +149,17 @@ func TestBastionSSHServerTPM(t *testing.T) {
 
 				if err := signer.Close(); err != nil {
 					t.Errorf("expected double close to succeed: %v", err)
+					return
+				}
+
+				reloaded, err := tpm.NewBlobSigner("simulator", blobPath, keyOpts)
+				if err != nil {
+					t.Errorf("failed to reload blob signer from existing blob: %v", err)
+					return
+				}
+				defer func() { _ = reloaded.Close() }()
+				if reloadedKey := marshalAuthorizedKey(reloaded.PublicKey()); reloadedKey != publicKey {
+					t.Errorf("expected reloaded public key %q, got %q", publicKey, reloadedKey)
 					return
 				}
 			})
