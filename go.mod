@@ -6,6 +6,6 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/go-tpm v0.9.8
 	github.com/google/go-tpm-tools v0.4.11
-	golang.org/x/crypto v0.58.0
-	golang.org/x/sys v0.49.0
+	golang.org/x/crypto v0.59.0
+	golang.org/x/sys v0.50.0
 )
